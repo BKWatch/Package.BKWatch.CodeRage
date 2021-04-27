@@ -19,8 +19,9 @@ use Exception;
 use Throwable;
 use CodeRage\Error;
 use CodeRage\Log;
+use CodeRage\Queue\Task;
 use CodeRage\Util\Args;
-
+use CodeRage\Util\Json;
 
 /**
  * Base class for queue processing tools that follow a uniform pattern
@@ -28,37 +29,82 @@ use CodeRage\Util\Args;
 abstract class BatchProcessor extends \CodeRage\Tool\Tool {
 
     /**
+     * @var int
+     */
+    protected const DEFAULT_BATCH_SIZE = 1;
+
+    /**
+     * The number of seconds to sleep after starting a worker; reduces the
+     * chance of database failures
+     *
+     * @var int
+     */
+    private const CREATE_WORKER_SLEEP = 1;
+
+    /**
+     * The number of seconds to sleep after checking the status of workers
+     *
+     * @var int
+     */
+    private const CHECK_WORKER_SLEEP = 1;
+
+    /**
      * @var array
      */
-    const OPTIONS =
-        [ 'taskMode', 'taskMaxAttempts', 'taskLifetime', 'taskSlaves',
+    private const OPTIONS =
+        [ 'taskMode', 'taskMaxAttempts', 'taskLifetime', 'taskWorkers',
           'taskBatchSize', 'taskSleep', 'taskShuffle', 'taskSessionid',
-          'taskDebug' ];
+          'taskData1', 'taskData2', 'taskData3', 'taskDebug' ];
+
+    /**
+     * @var array
+     */
+    private const MODE_OPTIONS =
+        [
+            'create' =>
+                [
+                    'taskMaxAttempts' => 1,
+                    'taskLifetime' => 1,
+                    'taskShuffle' => 1
+                ],
+            'run' =>
+                [
+                    'taskMaxAttempts' => 1,
+                    'taskLifetime' => 1,
+                    'taskShuffle' => 1,
+                    'taskBatchSize' => 1,
+                    'taskSleep' => 1,
+                    'taskData1' => 1,
+                    'taskData2' => 1,
+                    'taskData3' => 1
+                ],
+            'multi' =>
+                [
+                    'taskWorkers' => 1,
+                    'taskLifetime' => 1,
+                    'taskLifetime' => 1,
+                    'taskShuffle' => 1,
+                    'taskBatchSize' => 1,
+                    'taskSleep' => 1,
+                    'taskData1' => 1,
+                    'taskData2' => 1,
+                    'taskData3' => 1
+                ],
+            'worker' =>
+                [
+                    'taskMaxAttempts' => 1,  // Eliminate if possible
+                    'taskLifetime' => 1,     // Eliminate if possible
+                    'taskSessionid' => 1
+                ],
+            'status' => [],
+            'clear' => [],
+            'terminate' => []
+        ];
 
     /**
      * @var string
      */
-    const MATCH_MODE = '/^(create|run|master|slave|status|clear|terminate)$/';
-
-    /**
-     * @var int
-     */
-    const DEFAULT_BATCH_SIZE = 1;
-
-    /**
-     * The number of seconds to sleep after starting a slave; reduces the chance
-     * of database failures
-     *
-     * @var int
-     */
-    const CREATE_SLAVE_SLEEP = 1000;
-
-    /**
-     * The number of seconds to sleep after checking the status of slaves
-     *
-     * @var int
-     */
-    const CHECK_SLAVE_SLEEP = 1;
+    private const MATCH_MODE = '/^(create|run|multi|worker|status|clear|terminate)$/';
 
     /**
      * Constructs a Util\TaskProcessor
@@ -73,17 +119,17 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
 
     /**
      * @param array $options The options array; supports the following options:
-     *     taskMode - One of "create", "run", "master", "slave", "status",
-     *       "clear", "terminate"; defaults to "master" if "taskSlaves" is
+     *     taskMode - One of "create", "run", "multi", "worker", "status",
+     *       "clear", "terminate"; defaults to "multi" if "taskWorkers" is
      *       specified, and to "run", otherwise (optional)
      *     taskMaxAttempts - The maximum number of times to attempt each task
      *       (optional)
      *     taskLifetime - The task lifetime, in seconds (optional)
-     *     taskSlaves - The number of concurrent processes to run; only
-     *       compatible with mode "master" (optional)
-     *     taskBatchSize - The number of tasks to assign to a slave, for task
+     *     taskWorkers - The number of concurrent processes to run; only
+     *       compatible with mode "multi" (optional)
+     *     taskBatchSize - The number of tasks to assign to a worker, for task
      *       processors that do not customize task assignment; only compatible
-     *       with mode "master" (optional)
+     *       with mode "multi" (optional)
      *     taskSleep - The number of milliseconds to sleep between tasks;
      *       requires the cooperation of the derived class, if the derived class
      *       implements doProcessBatch() without using processTask(); defaults
@@ -91,36 +137,37 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
      *     taskShuffle - true to process tasks in shuffled order; requires
      *       the cooperation of the derived class; defaults to false
      *     taskSessionid - The session ID of an existing queue processing
-     *       session; only compatible with mode "slave" (optional)
+     *       session; only compatible with mode "worker" (optional)
+     *  @return mixed
      */
     public final function doExecute(array $options)
     {
-        $this->queue = $this->doQueue();
+        $this->queue = $this->doQueue($options);
         $this->processOptions($options);
-        $this->setParameters($options);
+        $this->parameters = $this->doParameters($this->pruneOptions($options));
         $mode = $options['taskMode'];
         $result = null;
         switch ($mode) {
         case 'create':
-            $result = $this->create($options, 0);
+            $result = $this->create($options);
             break;
         case 'run':
-            $result = $this->run($options, 0);
+            $result = $this->run($options);
             break;
-        case 'master':
-            $result = $this->master($options, 0);
+        case 'multi':
+            $result = $this->multi($options);
             break;
-        case 'slave':
-            $result = $this->slave($options, 0);
+        case 'worker':
+            $result = $this->worker($options);
             break;
         case 'status':
-            $result = $this->status($options, 0);
+            $result = $this->status($options);
             break;
         case 'clear':
-            $result = $this->clear($options, 0);
+            $result = $this->clear($options);
             break;
         case 'terminate':
-            $result = $this->terminate($options, 0);
+            $result = $this->terminate($options);
             break;
         default:
             // Can't occur
@@ -152,7 +199,7 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
      * Executes in "run" mode
      *
      * @param array $options The options array passed to doExecute
-     * @return Varies accoding to mode
+     * @return mixed
      */
     public final function run(array $options)
     {
@@ -164,30 +211,15 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
                     'lifetime' => $options['taskLifetime'],
                     'tool' => $this
                 ]);
-        $this->createTasks($options, $manager);
+        if ($this->countTasks($options) == 0) {
+            $this->createTasks($options, $manager);
+        }
         $retval = null;
         while (true) {
             $manager = $this->assignTasks($options);
             if ($manager === null)
                 break;
-            $queue = $this->queue();
-            $sql =
-                "SELECT RecordID as id, task, data1, data2, data3
-                 FROM [$queue]
-                 WHERE sessionid = %s AND
-                       status = %i AND
-                       parameters = %s
-                 ORDER BY RecordID";
-            $result =
-                $this->db()->query(
-                    $sql,
-                    $manager->sessionid(),
-                    Task::STATUS_PENDING,
-                    $this->parameters()
-                );
-            $batch = [];
-            while ($task = $result->fetchArray())
-                $batch[] = $task;
+            $batch = $manager->loadTasks(['owned' => true]);
             $rv = $this->processBatch($options, $manager, $batch);
             $retval = $this->aggregateResults($options, $retval, $rv);
         }
@@ -195,13 +227,12 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
     }
 
     /**
-     * Executes in "master" mode
+     * Executes in "multi" mode
      *
      * @param array $options The options array passed to doExecute()
-     * @return An associative array reference with keys "errors" and
-     *   "billablePages"
+     * @return mixed
      */
-    public final function master(array $options)
+    public final function multi(array $options)
     {
         // Create tasks
         $manager =
@@ -212,85 +243,106 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
                     'lifetime' => $options['taskLifetime'],
                     'tool' => $this
                 ]);
-        $this->createTasks($options, $manager);
+        if ($this->countTasks($options) == 0) {
+            $this->createTasks($options, $manager);
+        }
 
         // Encode options as string
-        $slaveOpts = $this->doEncodeOptions($options);
-        foreach (self::OPTIONS as $opt)
-            if (isset($options[$opt]) && $opt != 'taskSlaves')
-                $slaveOpts[$opt] = $options[$opt];
-        $slaveOpts['taskMode'] = 'slave';
-        unset($slaveOpts['taskSlaves']);
+        $workerOpts = $this->doEncodeOptions($options);
+        foreach (self::OPTIONS as $opt) {
+            if ( isset($options[$opt]) &&
+                 array_key_exists($opt, self::MODE_OPTIONS['worker']) )
+            {
+                $workerOpts[$opt] = $options[$opt];
+            }
+        }
+        $workerOpts['taskMode'] = 'worker';
+        $workerOpts['taskClass'] =  str_replace('\\', '.', static::class);
+        unset($workerOpts['taskWorkers']);
 
-        // Run slaves
-        $slaves = [];
+        // Run workers
+        $workers = [];
+        $hasResult = $hasError = false;
         $result = null;
         do {
 
-            // Create new slaves
-            $manager->clearSessions();
-            while ($slaves < $options['taskSlaves']) {
-                $manager = $this->assignTasks($options);
-                if ($manager !== null) {
-                   $slaves[] = new Slave($manager, $slaveOpts);
-                } else {
-                    break;
-                }
-                if ($slaves < $options['taskSlaves'])
-                   self::sleep(self::CHECK_SLAVE_SLEEP);
-            }
-
-            // Check existing slaves
-            for ($i = $slaves - 1; $i >= 0; --$i) {
-                $slave = $slaves[$i];
+            // Check existing workers
+            for ($i = count($workers) - 1; $i >= 0; --$i) {
+                $worker = $workers[$i];
                 try {
-                    if ($slave->terminated()) {
-                        array_splice($slaves, $i, 1);
-                        $res = $slave->result();
-                        $result =
-                            $this->aggregateResults($options, $result, $res);
+                    if ($worker->terminated()) {
+                        array_splice($workers, $i, 1);
+                        $res = $worker->result();
+                        $result = $this->aggregateResults($options, $result, $res);
+                        $hasResult = true;
                         if ($stream = $this->log()->getStream(Log::VERBOSE)) {
                             $this->logMessage(
-                                'Slave ' . $slave->sessionid() . ' ' .
+                                'Worker ' . $worker->sessionid() . ' ' .
                                 'completed with  output ' . $json->encode($res)
                             );
                         } elseif ($stream = $this->log()->getStream(Log::INFO)) {
                             $this->logMessage(
-                                'Slave ' . $slave->sessionid() . ' completed'
+                                'Worker ' . $worker->sessionid() . ' completed'
                             );
                         }
-                    } elseif ($slave->timedOut()) {
-                        array_splice($slaves, $i, 1);
+                    } elseif ($worker->timedOut()) {
+                        array_splice($workers, $i, 1);
                         $this->logMessage(
-                            'Slave ' . $slave->sessionid() . ' timed out'
+                            'Worker ' . $worker->sessionid() . ' timed out'
                         );
                     }
                 } catch (Throwable $e) {
                     $this->logError(
                         new Error([
                                 'details' =>
-                                    'Failed processing slave ' .
-                                    $slave->sessionid(),
+                                    'Failed processing worker ' .
+                                    $worker->sessionid(),
                                 'inner' => $e
                             ])
                     );
+                    $hasError = true;
                 }
             }
-            self::sleep(self::CHECK_SLAVE_SLEEP);
-        } while ($slaves);
 
-        // Output results
+            // Create new workers
+            $manager->clearSessions();
+            while (count($workers) < $options['taskWorkers']) {
+                $mngr = $this->assignTasks($options);
+                if ($mngr !== null) {
+                   $worker = new Worker($mngr, $workerOpts);
+                   $worker->start();
+                   $workers[] = $worker;
+                } else {
+                    break;
+                }
+                if (count($workers) < $options['taskWorkers']) {
+                    self::sleep(self::CREATE_WORKER_SLEEP);
+                }
+            }
+            if (!empty($workers)) {
+                self::sleep(self::CHECK_WORKER_SLEEP);
+            }
+
+        } while (!empty($workers));
+
+        if ($hasError && !$hasResult) {
+            throw new
+                Error([
+                    'status' => 'INTERNAL_ERROR',
+                    'message' => 'All workers failed'
+                ]);
+        }
+
         return $result;
     }
 
     /**
-     * Executes in "slave" mode
+     * Executes in "worker" mode
      *
      * @param array $options The options array passed to doExecute()
-     * @return An associative array reference with keys "errors" and
-     *   "billablePages"
+     * @return mixed
      */
-    public final function slave(array $options)
+    public final function worker(array $options)
     {
         $manager =
             new Manager([
@@ -301,24 +353,8 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
                     'sessionid' => $options['taskSessionid'],
                     'tool' => $this
                 ]);
-        $queue = $this->queue();
-        $sql =
-            "SELECT RecordID as id, task, data1, data2, data3
-             FROM [$queue]
-             WHERE sessionid = %s AND
-                   status = %i
-             ORDER BY RecordID";
-        $result =
-            $this->db()->query(
-                $sql,
-                $manager->sessionid(),
-                Task::STATUS_PENDING
-            );
-        $batch = [];
-        while ($task = $result->fetchArray())
-            $batch[] = $task;
-        $retval = $this->processBatch($options, $manager, $batch);
-        return $retval;
+        $batch = $manager->loadTasks(['owned' => true]);
+        return $this->processBatch($options, $manager, $batch);
     }
 
     /**
@@ -351,10 +387,10 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
                 Task::STATUS_FAILURE => 'failure',
                 Task::STATUS_PENDING => 'pending'
             ];
-        while ($row = $result->fetchRow())
+        while ($row = $result->fetchRow()) {
             $totals[$labels[$row[0]]] = $row[1];
-        $opts = $options;
-        return $this->doStatus($opts, $totals);
+        }
+        return $this->doStatus($options, $totals);
     }
 
     /**
@@ -383,7 +419,16 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
              WHERE sessionid IS NOT NULL AND
                    parameters = %s AND
                    status = %i",
-            $params, Task::STATUS_PENDING
+            $params,
+            Task::STATUS_PENDING
+        );
+        $this->db()->query(
+            "UPDATE [$queue]
+             SET sessionid = NULL
+             WHERE parameters = %s AND
+                   status != %i",
+            $params,
+            Task::STATUS_PENDING
         );
         return ['clearedSessions' => $count];
     }
@@ -436,13 +481,12 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
      */
     public final function createTasks(array $options, Manager $manager)
     {
-        $opts = $options;
-        return $this->doCreateTasks($opts, $manager);
+        return $this->doCreateTasks($options, $manager);
     }
 
     /**
      * Returns an instance of CodeRage\Queue\Manager that owns a collection of
-     * tasks to be processed by a slave
+     * tasks to be processed by a worker
      *
      * @param array $options The options array passed to doExecute, after
      *   processing
@@ -450,36 +494,35 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
      */
     public final function assignTasks(array $options)
     {
-        $opts = $options;
-        return $this->doAssignTasks($opts);
+        return $this->doAssignTasks($options);
     }
 
     /**
-     * Processes the given tasks; implemented by calling doProcessTask()
+     * Processes the given task; implemented by calling doProcessTask()
      *
      * @param array $options The options array passed to doExecute(), after
      *   processing
      * @param CodeRage\Queue\Manager $manager An instance of
      *   CodeRage\Queue\Manager
-     * @param array $task An associative array with keys "id",
-     *   "task", "data1", "data2", and "data3"
-     * @return The result of processing $task
+     * @param CodeRage\Queue\Task $task The task
+     * @return mixed The result of processing $task
      */
-    public final function processTask(array $options, Manager $manager, $task)
+    public final function processTask(array $options, Manager $manager, Task $task)
     {
         $opts = $this->pruneOptions($options);
         $result = $error = null;
         $status = Task::STATUS_SUCCESS;
         try {
             $result = $this->doProcessTask($opts, $manager, $task);
-            if ($options['taskSleep'] > 0)
+            if ($options['taskSleep'] > 0) {
                 $this->sleep($options['taskSleep']);
+            }
         } catch (Throwable $e) {
             $error = Error::wrap($e);
             $status = Task::STATUS_PENDING;
             $this->logError($error);
         }
-        $manager->updateTaskStatus($task['task'], $status, ['error' => $error]);
+        $task->update($status, ['error' => $error]);
         return $result;
     }
 
@@ -491,14 +534,12 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
      *   processing
      * @param CodeRage\Queue\Manager $manager An instance of
      *   CodeRage\Queue\Manager
-     * @param array $batch A array of associative array with keys
-     *   "id", "task", "data1", "data2", and "data3"
-     * @return The result of processing $batch
+     * @param array $batch A list of instances of CodeRage\Queue\Task
+     * @return mixed The result of processing $batch
      */
-    public final function processBatch(array $options, Manager $manager, $batch)
+    public final function processBatch(array $options, Manager $manager, array $batch)
     {
-        $opts = $this->pruneOptions($options);
-        return $this->doProcessBatch($opts, $manager, $batch);
+        return $this->doProcessBatch($options, $manager, $batch);
     }
 
     /**
@@ -511,21 +552,20 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
      *   exception thrown by doProcessTask; may be undefined if $b is the result
      *   of processing the first task in a batch
      * @param mixed $b The result of processing a task or batch or tasks, or
-     *   an exception thrown by doProcessTask(
-     * @return The result of combining $a and $b
+     *   an exception thrown by doProcessTask()
+     * @return mixed The result of combining $a and $b
      */
     public final function aggregateResults(array $options, $a, $b)
     {
-        $opts = $options;
-        return $this->doAggregateResults($opts, $a, $b);
+        return $this->doAggregateResults($options, $a, $b);
     }
 
     /**
-     * Processes and validates options to doExecute, excluding the options
+     * Processes and validates options to doExecute(), excluding the options
      * common to all task processors. A no-op by default.
      *
-     * @param array $options A reference to a copy of the options array passed
-     *   to doExecute, excluding common options
+     * @param array $options A copy of the options array passed to doExecute,
+     *   excluding common options
      */
     protected function doProcessOptions(array &$options)
     {
@@ -589,21 +629,15 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
      * empty, and otherwise calls doEncodeOptions() and JSON-encodes the result
      *
      * @param array $options The options array passed to doExecute(), after
-     *   processing
+     *   processing, excluding the options common to all task processors
      * @return The parameters, as a string
      */
     protected function doParameters(array $options)
     {
-        if (!$options)
+        if (empty($options))
             return '';
         $options = $this->doEncodeOptions($options);
-        $result = json_encode($options);
-        if ($result === null)
-            throw new
-                Error([
-                    'status' => INVALID_PARAMETER,
-                    'details' => 'JSON encoding error'
-                ]);
+        return Json::encode($options, ['throwOnError' => true]);
     }
 
     /**
@@ -611,14 +645,15 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
      *
      * @param array $options The options array passed to doExecute(), after
      *   processing
-     * @param CodeRage\Queue\Manager $manager An instance of CodeRage\Queue\Manager
+     * @param CodeRage\Queue\Manager $manager An instance of
+     *   CodeRage\Queue\Manager
      * @return int The number of tasks created
      */
-    protected abstract function doCreateTasks(array $options, Manager $manager);
+    protected abstract function doCreateTasks(array $options, Manager $manager): int;
 
     /**
      * Returns an instance of CodeRage\Queue\Manager that owns a collection of
-     * tasks to be processed by a slave; returns an null if no tasks are
+     * tasks to be processed by a worker; returns an null if no tasks are
      * available
      *
      * @param array $options The options array passed to doExecute(), after
@@ -635,7 +670,13 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
                     'lifetime' => $options['taskLifetime'],
                     'tool' => $this
                 ]);
-        $tasks = $manager->claimTasks(['maxJobs' => $options['taskBatchSize']]);
+        $tasks =
+            $manager->claimTasks([
+                'maxTasks' => $options['taskBatchSize'],
+                'data1' => $options['taskData1'] ?? null,
+                'data2' => $options['taskData2'] ?? null,
+                'data3' => $options['taskData3'] ?? null
+            ]);
         return $tasks > 0 ? $manager : null;
     }
 
@@ -647,12 +688,11 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
      *   processing
      * @param CodeRage\Queue\Manager $manager An instance of
      *   CodeRage\Queue\Manager
-     * @param array $task An associative array with keys "id", "task", "data1",
-     *   "data2", and "data3"
-     * @return The result of processing $task
+     * @param CodeRage\Queue\Manager $task The task
+     * @return mixed The result of processing $task
      * @throws CodeRage\Error if processing fails
      */
-    protected function doProcessTask(array $options, Manager $manager, $task)
+    protected function doProcessTask(array $options, Manager $manager, Task $task)
     {
         // No-op
     }
@@ -661,17 +701,16 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
      * Processes the given list of tasks; by default, processes each task by
      * calling doProcessTask and aggregates the results using aggregateResults.
      * This method is responsible for updating the status of the tasks in
-     * @batch.
+     * $batch.
      *
      * @param array $options The options array passed to doExecute()`, after
      *   processing
      * @param CodeRage\Queue\Manager $manager An instance of
      *   CodeRage\Queue\Manager
-     * @param array $batch A array of associative array with keys
-     *   "id", "task", "data1", "data2", and "data3"
-     * @return The result of processing $batch
+     * @param array $batch A list of instances of CodeRage\Queue\Task
+     * @return mixed The result of processing $batch
      */
-    protected function doProcessBatch(array $options, Manager $manager, $batch)
+    protected function doProcessBatch(array $options, Manager $manager, array $batch)
     {
         $result = null;
         foreach ($batch as $task) {
@@ -683,7 +722,7 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
 
     /**
      * Combines the two given queue processing results into a single result;
-     * returns null value by default
+     * returns null by default
      *
      * @param array $options The options array passed to doExecute(), after
      *   processing
@@ -692,7 +731,7 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
      *   of processing the first task in a batch
      * @param mixed $b The result of processing a task or batch or tasks, or
      *   an exception thrown by doProcessTask(
-     * @return The result of combining $a and $b
+     * @return mixed The result of combining $a and $b
      */
     protected function doAggregateResults(array $options, $a, $b)
     {
@@ -709,11 +748,21 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
      * @param array $totals An associative array reference with keys "success",
      *   "failure", and "pending", indicating the number of tasks with each
      *   status
-     * @return An associative array reference
+     * @return array An associative array reference
      */
     protected function doStatus(array $options, $totals)
     {
         return $totals;
+    }
+
+    /**
+     * Sleeps for the specified number of milliseconds
+     *
+     * @param int $ms
+     */
+    protected static function sleep($ms)
+    {
+        usleep($ms * 1000);
     }
 
     /**
@@ -723,129 +772,132 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
      */
     private function processOptions(array &$options)
     {
+        // Check consistency before applying default values
+        $mode = Args::checkKey($options, 'taskMode', 'string');
+        if ($mode !== null && !preg_match(self::MATCH_MODE, $mode)) {
+            throw new
+                Error([
+                    'status' => 'INVALID_PARAMETER',
+                    'details' => "Invalid taskMode: $mode"
+                ]);
+        }
+        foreach (self::OPTIONS as $opt) {
+            if ( isset($options[$opt]) &&
+                 $opt !== 'taskMode' &&
+                 !array_key_exists($opt, self::MODE_OPTIONS[$mode]) )
+            {
+                throw new
+                    Error([
+                        'status' => 'INCONSISTENT_PARAMETERS',
+                        'details' =>
+                            "The option '$opt' is incompatible with mode " .
+                            "'$mode'"
+                    ]);
+            }
+        }
+
         // Validate options
-        Args::checkKey($options, 'taskMode', 'string');
-        if ( isset($options['taskMode']) &&
-             !preg_match(self::MATCH_MODE, $options['taskMode']) )
-        {
+        $maxAttempts =
+            Args::checkIntKey($options, 'taskMaxAttempts', [
+                'default' => $this->doDefaultMaxAttempts()
+            ]);
+        if ($maxAttempts !== null && $maxAttempts <= 0) {
             throw new
                 Error([
                     'status' => 'INVALID_PARAMETER',
                     'details' =>
-                        "Invalid taskMode: {$options['taskMode']}"
+                        "Invalid taskMaxAttempts: expected positive integer; " .
+                        "found $maxAttempts"
                 ]);
         }
-        Args::checkKey($options, 'taskMaxAttempts', 'int', [
-            'default' => $this->doDefaultMaxAttempts()
-        ]);
-        if ( isset($options['taskMaxAttempts']) &&
-             $options['taskMaxAttempts'] <= 0 )
-        {
+        $lifetime =
+            Args::checkIntKey($options, 'taskLifetime', [
+                'default' => $this->doDefaultLifetime()
+            ]);
+        if ($lifetime !== null && $lifetime <= 0)
             throw new
                 Error([
                     'status' => 'INVALID_PARAMETER',
                     'details' =>
-                        'Invalid taskMaxAttempts: expected positive integer; ' .
-                        'found ' . $options['taskMaxAttempts']
+                        "Invalid taskLifetime: expected positive integer; " .
+                        "found $lifetime"
+                ]);
+        $workers = Args::checkIntKey($options, 'taskWorkers');
+
+        if ($workers !== null && $workers                 <               1) {
+            throw new
+                Error([
+                    'status' => 'INVALID_PARAMETER',
+                    'details' =>
+                        "Invalid taskWorkers: expected integer greater than " .
+                        "1; found $workers"
                 ]);
         }
-        Args::checkKey($options, 'taskLifetime', 'int', [
-            'default' => $this->doDefaultLifetime()
+        Args::checkIntKey($options, 'taskBatchSize', [
+            'default' => $this->doDefaultBatchSize() ?? self::DEFAULT_BATCH_SIZE
         ]);
-        if (isset($options['taskLifetime']) &&$options['taskLifetime'] <= 0)
+        $sleep =
+            Args::checkIntKey($options, 'taskSleep', [
+                'default' => 0
+            ]);
+        if ($sleep !== null && $sleep < 0) {
             throw new
                 Error([
                     'status' => 'INVALID_PARAMETER',
                     'details' =>
-                        'Invalid taskLifetime: expected positive integer; ' .
-                        'found ' . $options['taskLifetime']
+                        "Invalid taskWorkers: expected non-negative integer; " .
+                        "found $sleep"
                 ]);
-        Args::checkKey($options, 'taskSlaves', 'int');
-        if (isset($options['taskSlaves']) && $options['taskSlaves'] <= 1)
-            throw new
-                Error([
-                    'status' => 'INVALID_PARAMETER',
-                    'details' =>
-                        'Invalid taskSlaves: expected integer greater than ' .
-                        '1; found ' . $options['taskSlaves']
-                ]);
-        $default = $this->doDefaultBatchSize();
-        Args::checkKey($options, 'taskBatchSize', 'int', [
-            'default' => $default !== null ? $default : self::DEFAULT_BATCH_SIZE
-        ]);
-        Args::checkKey($options, 'taskSleep', 'int', [
-            'default' => 0
-        ]);
-        if (isset($options['taskSleep']) && $options['taskSleep'] < 0)
-            throw new
-                Error([
-                    'status' => 'INVALID_PARAMETER',
-                    'details' =>
-                        'Invalid taskSlaves: expected non-negative integer; ' .
-                        'found ' . $options['taskSleep']
-                ]);
-        Args::checkKey($options, 'taskShuffle', 'boolean', [
+        }
+        Args::checkBooleanKey($options, 'taskShuffle', [
             'default' => false
         ]);
-        Args::checkKey($options, 'taskSessionid', 'string');
-        Args::checkKey($options, 'taskDebug', 'boolean', [
-            'default' => false
-        ]);
+        $sessionId = Args::checkKey($options, 'taskSessionid', 'string');
+        Args::checkKey($options, 'taskData1', 'string|list[string]');
+        Args::checkKey($options, 'taskData2', 'string|list[string]');
+        Args::checkKey($options, 'taskData3', 'string|list[string]');
+        Args::checkKey($options, 'taskDebug', 'string');
 
         // Calculate mode
-        if (!isset($options['taskMode']))
-            $options['taskMode'] = isset($options['taskSlaves']) ?
-                'master' :
-                'run';
+        if ($mode === null) {
+            $options['taskMode'] = $workers !== null ? 'multi' : 'run';
+        }
 
         // Check relationships between options
-        if ( !isset($options['taskMaxAttempts']) &&
-             !isset($options['taskLifetime']) )
-        {
+        if ($maxAttempts === null && $lifetime === null) {
             throw new
                 Error([
                     'status' => 'MISSING_PARAMETER',
                     'details' => "Missing 'taskMaxAttempts' or 'taskLifetime'"
                 ]);
         }
-        if (isset($options['taskSlaves']) && $options['taskMode'] != 'master')
+        if ($workers !== null && $mode != 'multi') {
             throw new
                 Error([
                     'status' => 'INCONSISTENT_PARAMETERS',
                     'details' =>
-                        "The option 'taskSlaves' is incompatible with mode " .
-                        "'{$options['taskMode']}'"
+                        "The option 'taskWorkers' is incompatible with mode " .
+                        "'$mode'"
                 ]);
-        if (isset($options['taskSessionid']) != ($options['taskMode'] == 'slave'))
+        }
+        if (($sessionId !== null) != ($mode == 'worker')) {
             throw new
                 Error([
                     'status' => 'INCONSISTENT_PARAMETERS',
-                    'details' => isset($options['taskSessionid']) ?
+                    'details' => $sessionId !== null ?
                         "The option 'taskSessionid' is incompatible with mode " .
-                            "'{$options['taskMode']}'" :
+                            "'$mode'" :
                         "Missing session ID"
                 ]);
+        }
 
         // Process processor-specific options
         $procOpts = $this->pruneOptions($options);
-        foreach ($procOpts as $opt => $v)
+        foreach ($procOpts as $opt => $v) {
             unset($options[$opt]);
+        }
         $this->doProcessOptions($procOpts);
-        foreach ($procOpts as $n => $v)
-            $options[$n] = $v;
-    }
-
-    /**
-     * Sets the _parameters property
-     *
-     * @param array $options The options array passed to doExecute(), after
-     *   processing
-     */
-    private function setParameters(array $options)
-    {
-        foreach (self::OPTIONS as $opt)
-            unset($options[$opt]);
-        $this->parameters = $this->doParameters($options);
+        $options += $procOpts;
     }
 
     /**
@@ -857,20 +909,26 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
      */
     private function pruneOptions(array $options)
     {
-        $result = $options;
         foreach (self::OPTIONS as $opt)
-            unset($result[$opt]);
-        return $result;
+            unset($options[$opt]);
+        return $options;
     }
 
     /**
-     * Sleeps for the specified number of milliseconds
+     * Returns the number of tasks in the queue with parameters equal to the
+     * current parameters
      *
-     * @param int $ms
+     * @param array $options The options array passed to doExecute()
+     * @return int
      */
-    private static function sleep($ms)
+    private function countTasks(array $options): int
     {
-        usleep($ms * 1000);
+        $queue = $this->queue();
+        return
+            $this->db()->fetchValue(
+                "SELECT COUNT(*) {i} FROM [$queue] WHERE parameters = %s",
+                $this->parameters()
+            );
     }
 
     /**

@@ -216,7 +216,8 @@ class Engine extends \CodeRage\Util\BasicProperties {
                 $engine->cleanImpl();
             }, [
                 'mode' => 'build',
-                'updateConfig' => false
+                'updateConfig' => false,
+                'throwOnError' => false
             ]);
     }
 
@@ -235,7 +236,8 @@ class Engine extends \CodeRage\Util\BasicProperties {
                 File::rm($this->projectRoot . '/.coderage');
             }, [
                 'mode' => 'build',
-                'updateConfig' => false
+                'updateConfig' => false,
+                'throwOnError' => false
             ]);
     }
 
@@ -261,6 +263,7 @@ class Engine extends \CodeRage\Util\BasicProperties {
             }
         }
         $options['mode'] = 'build';
+        $options['throwOnError'] = 'false';
         self::processOptions($options);
         return $this->run(function($engine) {
             $engine->foreachModule('build');
@@ -278,6 +281,7 @@ class Engine extends \CodeRage\Util\BasicProperties {
             $engine->foreachModule('install');
         }, [
             'mode' => 'build',
+            'throwOnError' => false
         ]);
     }
 
@@ -290,7 +294,9 @@ class Engine extends \CodeRage\Util\BasicProperties {
     {
         return $this->run(function($engine) {
             $engine->foreachModule('sync');
-        });
+        }, [
+            'throwOnError' => false
+        ]);
     }
 
     /**
@@ -311,6 +317,8 @@ class Engine extends \CodeRage\Util\BasicProperties {
      *     setAsCurrent - true to register this instances as the global engine,
      *       accessible via current(), for the duration of this method; defaults
      *       to true
+     *     throwOnError - true to rethrow any exception that occurs during
+     *       execution; defaults to true
      * @return bool
      */
     public final function run(callable $action, array $options = []) : bool
@@ -353,8 +361,12 @@ class Engine extends \CodeRage\Util\BasicProperties {
                     self::$current = $this;
                 $action($this);
             } catch (Throwable $e) {
-                $status = false;
-                $this->log->logError($e);
+                if ($options['throwOnError']) {
+                    throw $e;
+                } else {
+                    $status = false;
+                    $this->log->logError($e);
+                }
             } finally {
                 self::$current = $current;
 
@@ -389,9 +401,9 @@ class Engine extends \CodeRage\Util\BasicProperties {
     }
 
     /**
-     * Validates and processes options for execute()
+     * Validates and processes options for run()
      *
-     * @param array $options The options array passed to execute()
+     * @param array $options The options array passed to run()
      */
     private function processOptions(array &$options) : void
     {
@@ -429,6 +441,9 @@ class Engine extends \CodeRage\Util\BasicProperties {
             'default' => self::DEFAULT_LOG_ERROR_COUNT[$mode]
         ]);
         Args::checkBooleanKey($options, 'setAsCurrent', [
+            'default' => true
+        ]);
+        Args::checkBooleanKey($options, 'throwOnError', [
             'default' => true
         ]);
     }

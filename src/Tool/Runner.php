@@ -210,7 +210,7 @@ final class Runner {
                     $errorOpts['details'] = $error->details();
                 self::outputResponse($errorOpts);
             }
-        });
+        }, ['throwOnError' => false]);
     }
 
     /**

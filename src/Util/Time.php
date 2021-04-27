@@ -106,7 +106,7 @@ final class Time {
      *       "month", and "day"
      * @return mixed An instance of DateTIme or a string
      */
-    public static function createDateTime(array $options)
+    public static function createDateTime(array $options = [])
     {
         foreach (array_keys($options) as $n)
             if (!array_key_exists($n, self::CREATE_OPTIONS))

@@ -4,7 +4,7 @@
 
   <description>Table definitions for CodeRage\Db test suite</description>
 
-  <!-- Required by test suite -->
+  <!-- Common Columns -->
 
   <commonColumns>
     <column name="RecordID" type="autoincrement" primaryKey="true">

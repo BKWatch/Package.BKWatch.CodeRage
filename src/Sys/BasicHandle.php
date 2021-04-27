@@ -31,12 +31,12 @@ class BasicHandle implements Handle {
      * Constructs an instance of CodeRage\Sys\BasicHandle
      *
      * @param array $options The options array; supports the following options:
-     *     engine - An instance of CodeRage\Sys\Engine
+     *     engine - An instance of CodeRage\Sys\Engine (optional)
      *     container - An instance of Psr\Container\ContainerInterface (optional)
      *     handle - An instance of CodeRage\Sys\Handle (optional)
-     *   Exactly on option must be supplied
+     *   At most one option must be supplied
      */
-    public function __construct($options)
+    public function __construct($options = [])
     {
         $engine = Args::checkKey($options, 'engine', 'CodeRage\Sys\Engine');
         $container = Args::checkKey($options, 'container', 'Psr\Container\ContainerInterface');

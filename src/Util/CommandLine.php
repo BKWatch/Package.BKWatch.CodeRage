@@ -789,7 +789,8 @@ class CommandLine {
             function($callable) { return $callable(); } :
             function($callable)
             {
-                return (new \CodeRage\Sys\Engine)->run($callable);
+                $engine = new \CodeRage\Sys\Engine;
+                return $engine->run($callable, ['throwOnError' => false]);
             };
         return $runner(function() use($options) {
             try {

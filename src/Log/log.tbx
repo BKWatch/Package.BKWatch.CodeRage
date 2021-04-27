@@ -19,6 +19,17 @@
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:schemaLocation="http://www.coderage.com/2008/project ../db/Schema/dataSource.xsd">
 
+  <!-- Common Columns -->
+
+  <commonColumns>
+    <column name="RecordID" type="autoincrement" primaryKey="true">
+      <description>Identifier for this record in the table.</description>
+    </column>
+    <column name="CreationDate" type="int(32)" nullable="false">
+      <description>When the record was created.</description>
+    </column>
+  </commonColumns>
+
   <!-- LogSession table -->
 
   <table name="LogSession">

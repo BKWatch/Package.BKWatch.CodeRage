@@ -72,7 +72,7 @@ final class Random {
      * @param string $alphabet The alphabet, as a string of single-byte
      *   character
      */
-    public function string_(int $length, string $alphabet = self::ALNUM)
+    public static function string_(int $length, string $alphabet = self::ALNUM)
         : string
     {
         $max = strlen($alphabet) - 1;

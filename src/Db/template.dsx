@@ -14,13 +14,8 @@
   -->
 <dataSource xmlns="http://www.coderage.com/2008/project" name="default" version="1.0">
   <database name="{config.db.database}" version="1.0">
-    <commonColumns>
-      <column name="RecordID" type="autoincrement" primaryKey="true">
-        <description>Identifier for this record in the table.</description>
-      </column>
-      <column name="CreationDate" type="integer" nullable="false">
-        <description>When the record was created.</description>
-      </column>
-    </commonColumns>
+
+    <!-- Comment required for formatting -->
+
   </database>
 </dataSource>

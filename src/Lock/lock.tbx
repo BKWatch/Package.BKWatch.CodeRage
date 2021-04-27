@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  //////////////////////////////////////////////////////////////////////////////
+  //
+  // Contains the table definitions used by the CodeRage lock module
+  //
+  // File:        CodeRage/Lock/lock.tbx
+  // Date:        Thu Apr 29 18:56:01 UTC 2021
+  // Notice:      This document contains confidential information and
+  //              trade secrets
+  //
+  // Copyright:   2021 CounselNow, LLC
+  // Author:      Jonathan Turkanis
+  // License:     All rights reserved
+  //
+  //////////////////////////////////////////////////////////////////////////////
+  -->
+<tables xmlns="http://www.coderage.com/2008/project"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <description>Defines the table LockSemaphore</description>
+
+  <!-- LockKey table -->
+
+  <table name="LockKey">
+    <description>
+      Stores information about locks
+    </description>
+    <column name="id" type="varchar(64)" primaryKey="true">
+      <description>The lock ID</description>
+    </column>
+    <column name="token" type="varchar(64)" nullable="false">
+      <description>The lock token</description>
+    </column>
+    <column name="expiration" type="integer">
+      <description>The lock expiration timestamp</description>
+    </column>
+  </table>
+
+</tables>

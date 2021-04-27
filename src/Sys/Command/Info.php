@@ -97,7 +97,8 @@ final class Info extends Base {
             return $this->executeImpl($engine);
         }, [
             'mode' => 'build',
-            'updateConfig' => false
+            'updateConfig' => false,
+            'throwOnError' => false
         ]);
     }
 

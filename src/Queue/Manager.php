@@ -2,7 +2,7 @@
 
 /**
  * Defines the class CodeRage\Queue\Manager
- * 
+ *
  * File:        CodeRage/Queue/Manager.php
  * Date:        Wed Dec 25 18:09:34 UTC 2019
  * Notice:      This document contains confidential information
@@ -170,7 +170,7 @@ final class Manager {
      *
      * @return string
      */
-    public function sessionid()
+    public function sessionid(): string
     {
         return $this->impl->session->sessionid();
     }
@@ -181,7 +181,7 @@ final class Manager {
      * @param array $row An associative array representing a record in a
      *   database table representing a row in the queue
      */
-    public function constructTask(array $row)
+    public function constructTask(array $row): Task
     {
         return new Task($this->impl, $row);
     }
@@ -208,7 +208,7 @@ final class Manager {
      *       0; defaults to false
      * @throws CodeRage\Error if a task cannot be created
      */
-    public function createTask(string $taskid, array $options = [])
+    public function createTask(string $taskid, array $options = []): void
     {
         // Process options
         $data1 = Args::checkKey($options, 'data1', 'string');
@@ -352,9 +352,12 @@ final class Manager {
      *     queue - The name of the database table containing the queue
      *   status - An intergal status or list of intergal statuses; by default,
      *     tasks will be loaded regardless of status
-     * @return int The number of claimed tasks
+     *   owned - true to return only tasks that are owned by this manager and would
+     *     would not be marked as failed by the method markTasksFailed();
+     *     defaults to false
+     * @return array A list of instances of CodeRGage\Queue\Task
      */
-    public function loadTasks(array $options = [])
+    public function loadTasks(array $options = []): array
     {
         if (isset($options['available']))
             throw new
@@ -384,7 +387,7 @@ final class Manager {
      *     queue - The name of the database table containing the queue
      * @return int The number of claimed tasks
      */
-    public function claimTasks(array $options = [])
+    public function claimTasks(array $options = []): int
     {
         foreach (['taskid', 'status', 'available'] as $name)
             if (isset($options[$name]))
@@ -467,7 +470,7 @@ final class Manager {
      *     total - The number of tasks processed
      *     succeess  The number of tasks processed successfully
      */
-    public function processTasks(array $options)
+    public function processTasks(array $options): array
     {
         // Process options
         $action =
@@ -518,6 +521,7 @@ final class Manager {
                             "owned by manager"
                     ]);
             }
+            $this->logMessage('Processing task ' . $task->taskid());
             $status = $error = null;
             try {
                 $arg2 = $hasCustomResult ? $row : null;
@@ -553,189 +557,9 @@ final class Manager {
     /**
      * Updates the session expiration timestamp
      */
-    public function touchSession()
+    public function touchSession(): void
     {
         $this->impl->session->touch();
-    }
-
-    /**
-     * Writes the full contents of the queue to the log, if any
-     */
-    public function dumpQueue()
-    {
-        if ($this->log() === null)
-            return;
-        $sql = "SELECT * FROM [{$this->impl->queue}] ORDER BY CreationDate";
-        $result = $this->db()->query($sql);
-        $tasks = [];
-        while ($row = $result->fetchArray())
-            $tasks[] = $this->encodeTask($row);
-        $this->logMessage('Contents', $tasks);
-    }
-
-    /**
-     * Helper for loadTasks() and claimTasks()
-     *
-     * @param array $options The options array; supports the following options:
-     *   maxTasks - The maximum number of tasks to claim (optional)
-     *   taskid - The task ID (optional)
-     *   data1 - The value of the data1 column of the jobs to claim, or a list
-     *     of values (optional)
-     *   data2 - The value of the data1 column of the jobs to claim, or a list
-     *     of values (optional)
-     *   data3 - The value of the data1 column of the jobs to claim, or a list
-     *     of values (optional)
-     *     queue - The name of the database table containing the queue
-     *   status - An integral status or list of intergal statuses; by default,
-     *     tasks will be loaded regardless of status
-     *   available - true to return only tasks that are unowned and would
-     *     not be marked as failed by the method markTasksFailed(); defaults to
-     *     false
-     * @return array A pair [$sql, $values] consisting of a SQL query and a list
-     *   of parameter values
-     */
-    private function listTasks(array &$options)
-    {
-        // Process options
-        $maxTasks = Args::checkKey($options, 'maxTasks', 'int');
-        if ($maxTasks !== null && $maxTasks <= 0)
-            throw new
-                Error([
-                    'status' => 'INVALID_PARAMETER',
-                    'details' => 'maxTasks must be non-negative'
-                ]);
-        $taskid = Args::checkKey($options, 'taskid', 'string');
-        foreach (['data1', 'data2', 'data3'] as $name) {
-            $value =
-                Args::checkKey($options, $name, 'string|list[string]', [
-                    'default' => null
-                ]);
-            if (is_string($value)) {
-                $options[$name] = [$value];
-            } elseif ($value !== null && empty($value)) {
-                throw new
-                    Error([
-                        'status' => 'INVALID_PARAMETER',
-                        'details' => "$name must be non-empty"
-                    ]);
-            }
-        }
-        $status = Args::checkKey($options, 'status', 'int|list[int]');
-        if ($status !== null) {
-            if (is_int($status))
-                $status = [$status];
-            foreach ($status as $s) {
-                if ( $s < Task::STATUS_SUCCESS ||
-                     $s > Task::STATUS_FAILURE )
-                {
-                    throw new
-                        Error([
-                            'status' => 'INVALID_PARAMETER',
-                            'details' => "Invalid status: $s"
-                        ]);
-                }
-            }
-        }
-        $available =
-            Args::checkKey($options, 'available', 'boolean', [
-                'default' => false
-            ]);
-        if (isset($options['maxJobs']))  // Check for obsolete option
-            throw new
-                Error([
-                    'status' => 'INVALID_PARAMETER',
-                    'details' => 'Unsupported option: maxJobs'
-                ]);
-
-        // Construct query
-        $where = $values = [];
-        if ($this->impl->parameters !== null) {
-            $where[] = 'parameters = %s';
-            $values[] = $this->impl->parameters;
-        }
-        if ($taskid !== null) {
-            $where[] = 'taskid = %s';
-            $values[] = $taskid;
-        }
-        foreach (['data1', 'data2', 'data3'] as $name) {
-            if (($value = $options[$name]) !== null) {
-                $ph = join(',', array_fill(0, count($value), '%s'));
-                $where[] = "$name in ($ph)";
-                foreach ($value as $v)
-                    $values[] = $v;
-            }
-        }
-        if ($status !== null) {
-            $where[] =
-                'status IN (' . join(',', array_fill(0, count($status), '%i')) .
-                ')';
-            foreach ($status as $s)
-                $values[] = $s;
-        }
-        if ($available) {
-            $where[] =
-                'sessionid IS NULL AND expires >= %i AND
-                 (maxAttempts IS NULL OR attempts < maxAttempts)';
-            $values[] = Time::get();
-        }
-        $sql =
-            "SELECT *
-             FROM [{$this->impl->queue}]
-             WHERE " . join(' AND ', $where);
-        if ($maxTasks !== null) {
-            $sql .= ' LIMIT %i';
-            $values[] = $maxTasks;
-        }
-
-        return [$sql, $values];
-    }
-
-
-    /**
-     * Helper method for the constrtuctor, for processing the special value
-     * CodeRage\Queue\Task::NO_PARAMS for the option "parameters"
-     *
-     * @param array $options The options array; supports the following options:
-     *     parameters -The runtime parameters for newly created tasks and of
-     *       claimed task, if no "parameters" option is passed to createTask()
-     *       or claimTasks(); defaults to an empty string. To avoid setting any
-     *       runtime parameters, pass the special value
-     *       CodeRage\Queue\Task::NO_PARAMS.
-     * @eturn string The parameters, if any
-     */
-    private static function processParameters(array &$options)
-    {
-        $parameters =
-            Args::checkKey($options, 'parameters', 'float|string', [
-                'default' => ''
-            ]);
-        if (is_float($parameters)) {
-            if ($parameters === Task::NO_PARAMS) {
-                $parameters = $options['parameters'] = null;
-            } else {
-
-                // Throw an exception
-                Args::check($parameters, 'string', 'parameters');
-            }
-        }
-        return $parameters;
-    }
-
-    /**
-     * Starts a new task processing session
-     *
-     * @params array $options The optins array; supports the following options:
-     *     sessionLifetime - The queue processing session lifetime, in seconds
-     *     sessionUserid - The ID of the user associatied with the queue
-     *       processing session
-     */
-    private function startSession(array $options)
-    {
-        $this->impl->session =
-            Session::create([
-                'userid' => $options['sessionUserid'],
-                'lifetime' => $options['sessionLifetime']
-            ]);
     }
 
     /**
@@ -743,7 +567,7 @@ final class Manager {
      * column to NULL and incrementing their "attempts" columns, for tasks owned
      * by expired sessions
      */
-    private function clearSessions()
+    public function clearSessions(): void
     {
         if ($this->log() !== null)
             $this->logMessage('Clearing sessions');
@@ -790,9 +614,203 @@ final class Manager {
     }
 
     /**
+     * Writes the full contents of the queue to the log, if any
+     */
+    public function dumpQueue(): void
+    {
+        if ($this->log() === null)
+            return;
+        $sql = "SELECT * FROM [{$this->impl->queue}] ORDER BY CreationDate";
+        $result = $this->db()->query($sql);
+        $tasks = [];
+        while ($row = $result->fetchArray())
+            $tasks[] = $this->encodeTask($row);
+        $this->logMessage('Contents', $tasks);
+    }
+
+    /**
+     * Helper for loadTasks() and claimTasks()
+     *
+     * @param array $options The options array; supports the following options:
+     *   maxTasks - The maximum number of tasks to claim (optional)
+     *   taskid - The task ID (optional)
+     *   data1 - The value of the data1 column of the jobs to claim, or a list
+     *     of values (optional)
+     *   data2 - The value of the data1 column of the jobs to claim, or a list
+     *     of values (optional)
+     *   data3 - The value of the data1 column of the jobs to claim, or a list
+     *     of values (optional)
+     *     queue - The name of the database table containing the queue
+     *   status - An integral status or list of intergal statuses; by default,
+     *     tasks will be loaded regardless of status
+     *   available - true to return only tasks that are unowned and would
+     *     not be marked as failed by the method markTasksFailed(); defaults to
+     *     false
+     *   owned - true to return only tasks that are owned by this manager and would
+     *     would not be marked as failed by the method markTasksFailed();
+     *     defaults to false
+     * @return array A pair [$sql, $values] consisting of a SQL query and a list
+     *   of parameter values
+     */
+    private function listTasks(array &$options): array
+    {
+        // Process options
+        $maxTasks = Args::checkKey($options, 'maxTasks', 'int');
+        if ($maxTasks !== null && $maxTasks <= 0)
+            throw new
+                Error([
+                    'status' => 'INVALID_PARAMETER',
+                    'details' => 'maxTasks must be non-negative'
+                ]);
+        $taskid = Args::checkKey($options, 'taskid', 'string');
+        foreach (['data1', 'data2', 'data3'] as $name) {
+            $value =
+                Args::checkKey($options, $name, 'string|list[string]', [
+                    'default' => null
+                ]);
+            if (is_string($value)) {
+                $options[$name] = [$value];
+            } elseif ($value !== null && empty($value)) {
+                throw new
+                    Error([
+                        'status' => 'INVALID_PARAMETER',
+                        'details' => "$name must be non-empty"
+                    ]);
+            }
+        }
+        $status = Args::checkKey($options, 'status', 'int|list[int]');
+        if ($status !== null) {
+            if (is_int($status))
+                $status = [$status];
+            foreach ($status as $s) {
+                if ( $s < Task::STATUS_SUCCESS ||
+                     $s > Task::STATUS_FAILURE )
+                {
+                    throw new
+                        Error([
+                            'status' => 'INVALID_PARAMETER',
+                            'details' => "Invalid status: $s"
+                        ]);
+                }
+            }
+        }
+        $available =
+            Args::checkKey($options, 'available', 'boolean', [
+                'default' => false
+            ]);
+        $owned =
+            Args::checkKey($options, 'owned', 'boolean', [
+                'default' => false
+            ]);
+        if (isset($options['maxJobs']))  // Check for obsolete option
+            throw new
+                Error([
+                    'status' => 'INVALID_PARAMETER',
+                    'details' => 'Unsupported option: maxJobs'
+                ]);
+
+        // Construct query
+        $where = $values = [];
+        if ($this->impl->parameters !== null) {
+            $where[] = 'parameters = %s';
+            $values[] = $this->impl->parameters;
+        }
+        if ($taskid !== null) {
+            $where[] = 'taskid = %s';
+            $values[] = $taskid;
+        }
+        foreach (['data1', 'data2', 'data3'] as $name) {
+            if (($value = $options[$name]) !== null) {
+                $ph = join(',', array_fill(0, count($value), '%s'));
+                $where[] = "$name in ($ph)";
+                foreach ($value as $v)
+                    $values[] = $v;
+            }
+        }
+        if ($status !== null) {
+            $where[] =
+                'status IN (' . join(',', array_fill(0, count($status), '%i')) .
+                ')';
+            foreach ($status as $s)
+                $values[] = $s;
+        }
+        if ($available) {
+            $where[] =
+                'sessionid IS NULL AND expires >= %i AND
+                 (maxAttempts IS NULL OR attempts < maxAttempts)';
+            $values[] = Time::get();
+        }
+        if ($owned) {
+            $where[] =
+                'sessionid = %s AND expires >= %i AND
+                 (maxAttempts IS NULL OR attempts < maxAttempts)';
+            $values[] = $this->sessionid();
+            $values[] = Time::get();
+        }
+        $sql =
+            "SELECT *
+             FROM [{$this->impl->queue}]
+             WHERE " . join(' AND ', $where);
+        if ($maxTasks !== null) {
+            $sql .= ' LIMIT %i';
+            $values[] = $maxTasks;
+        }
+
+        return [$sql, $values];
+    }
+
+
+    /**
+     * Helper method for the constrtuctor, for processing the special value
+     * CodeRage\Queue\Task::NO_PARAMS for the option "parameters"
+     *
+     * @param array $options The options array; supports the following options:
+     *     parameters -The runtime parameters for newly created tasks and of
+     *       claimed task, if no "parameters" option is passed to createTask()
+     *       or claimTasks(); defaults to an empty string. To avoid setting any
+     *       runtime parameters, pass the special value
+     *       CodeRage\Queue\Task::NO_PARAMS.
+     * @eturn string The parameters, if any
+     */
+    private static function processParameters(array &$options): string
+    {
+        $parameters =
+            Args::checkKey($options, 'parameters', 'float|string', [
+                'default' => ''
+            ]);
+        if (is_float($parameters)) {
+            if ($parameters === Task::NO_PARAMS) {
+                $parameters = $options['parameters'] = null;
+            } else {
+
+                // Throw an exception
+                Args::check($parameters, 'string', 'parameters');
+            }
+        }
+        return $parameters;
+    }
+
+    /**
+     * Starts a new task processing session
+     *
+     * @params array $options The optins array; supports the following options:
+     *     sessionLifetime - The queue processing session lifetime, in seconds
+     *     sessionUserid - The ID of the user associatied with the queue
+     *       processing session
+     */
+    private function startSession(array $options): void
+    {
+        $this->impl->session =
+            Session::create([
+                'userid' => $options['sessionUserid'],
+                'lifetime' => $options['sessionLifetime']
+            ]);
+    }
+
+    /**
      * Deletes expired tasks from the queue
      */
-    private function deleteExpiredTasks()
+    private function deleteExpiredTasks(): void
     {
         if ($this->log() !== null)
             $this->logMessage('Deleting expired tasks');
@@ -833,7 +851,7 @@ final class Manager {
      * Sets the value of column "status" to STATUS_FAILED for jobs that have
      * expired or for which the maximum number of attempts has been exhausted
      */
-    private function markTasksFailed()
+    private function markTasksFailed(): void
     {
         if ($this->log() !== null)
             $this->logMessage('Marking tasks failed');
@@ -896,7 +914,7 @@ final class Manager {
      * @param array $row An associative array reprenting a record in the queue
      * @return stdClass
      */
-    private function encodeTask(array $row)
+    private function encodeTask(array $row): object
     {
         return (new Task($this->impl, $row))->encode();
     }
@@ -906,7 +924,7 @@ final class Manager {
      *
      * @return CodeRage\Db
      */
-    private function db()
+    private function db(): \CodeRage\Db
     {
         return $this->impl->tool->db();
     }
@@ -916,7 +934,7 @@ final class Manager {
      *
      * @return CodeRage\Log
      */
-    private function log()
+    private function log(): ?Log
     {
         return $this->impl->log;
     }

@@ -21,7 +21,7 @@
 
   <description>Contains users and permissions</description>
 
-  <!-- Required by test suite -->
+  <!-- Common Columns -->
 
   <commonColumns>
     <column name="RecordID" type="autoincrement" primaryKey="true">

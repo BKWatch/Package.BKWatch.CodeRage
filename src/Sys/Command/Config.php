@@ -102,7 +102,8 @@ final class Config extends Base {
             'mode' => 'build',
             'setProperties' => $this->setProperties(),
             'unsetProperties' => $this->unsetProperties(),
-            'updateConfig' => !$this->hasValue('get')
+            'updateConfig' => !$this->hasValue('get'),
+            'throwOnError' => false
         ]);
     }
 }

@@ -96,13 +96,7 @@ final class Module extends \CodeRage\Sys\BasicModule {
         $command = join(' ', $options);
         $engine->log()->logMessage("running $command");
         $status = null;
-        Os::run($command, $status);
-        if ($status != 0)
-            throw new
-                Error([
-                    'status' => 'INTERNAL_ERROR',
-                    'message' => 'Failed creating database'
-                ]);
+        Os::run($command);
 
         // Grant permission
         $host = $this->getProperty($config, 'db.host');
@@ -163,9 +157,22 @@ final class Module extends \CodeRage\Sys\BasicModule {
                     Xml::loadDocument($def, self::METASCHEMA_PATH, [
                         'preserveWhitespace' => false
                     ]);
+                $common =
+                    Xml::firstChildElement(
+                        $inner->documentElement,
+                        'commonColumns'
+                    );
                 $tables = $doc->importNode($inner->documentElement, true);
-                foreach (Xml::childElements($tables, 'table') as $table)
+                foreach (Xml::childElements($tables, 'table') as $table) {
+                    if ($common !== null) {
+                        $first = Xml::firstChildElement($table, 'column');
+                        foreach (Xml::childElements($common, 'column') as $col) {
+                            $col = $doc->importNode($col, true);
+                            $table->insertBefore($col, $first);
+                        }
+                    }
                     $db->appendChild($table);
+                }
             }
         }
         return $doc;

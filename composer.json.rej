@@ -1,0 +1,10 @@
+--- composer.json
++++ composer.json
+@@ -8,6 +8,7 @@
+     ],
+     "license" : "proprietary",
+     "require" : {
++        "aws/aws-sdk-php" : "^3.48",
+         "bkwatch/wampsyncclient" : "^2.0.0",
+         "drupol/phpermutations" : "^1.3",
+         "guzzlehttp/guzzle" : "~6.0",

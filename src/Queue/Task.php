@@ -2,7 +2,7 @@
 
 /**
  * Defines the class CodeRage\Queue\Task
- * 
+ *
  * File:        CodeRage/Queue/Task.php
  * Date:        Wed Dec 25 18:27:37 UTC 2019
  * Notice:      This document contains confidential information
@@ -135,6 +135,15 @@ final class Task {
         return $this->impl->data1;
     }
 
+    /**
+     * Sets the first data item associated with the task to the given value
+     *
+     * @param string $value The value
+     */
+    public function setData1(string $value): void
+    {
+        $this->manager->setData1($this->impl, $value);
+    }
 
     /**
      * Returns the second data item associated with the task, if any
@@ -146,6 +155,15 @@ final class Task {
         return $this->impl->data2;
     }
 
+    /**
+     * Sets the second data item associated with the task to the given value
+     *
+     * @param string $value The value
+     */
+    public function setData2(string $value): void
+    {
+        $this->manager->setData2($this->impl, $value);
+    }
 
     /**
      * Returns the third data item associated with the task, if any
@@ -157,6 +175,15 @@ final class Task {
         return $this->impl->data3;
     }
 
+    /**
+     * Sets the third data item associated with the task to the given value
+     *
+     * @param string $value The value
+     */
+    public function setData3(string $value): void
+    {
+        $this->manager->setData3($this->impl, $value);
+    }
 
     /**
      * Returns the runtime parameters
@@ -337,105 +364,4 @@ final class Task {
      * @var CodeRage\Queue\TaskImpl
      */
     public $impl;
-
-    /**
-     * The database ID
-     *
-     * @var int
-     */
-    public $id;
-
-    /**
-     * The opaque task identifier
-     *
-     * @var string
-     */
-    public $taskid;
-
-    /**
-     * The first data item associated with the task, if any
-     *
-     * @var string
-     */
-    public $data1;
-
-    /**
-     * The second data item associated with the task, if any
-     *
-     * @var string
-     */
-    public $data2;
-
-    /**
-     * The third data item associated with the task, if any
-     *
-     * @var string
-     */
-    public $data3;
-
-    /**
-     * The runtime parameters
-     *
-     * @var string
-     */
-    public $parameters;
-
-    /**
-     * The creation date, as a UNIX timestamp
-     *
-     * @var int
-     */
-    public $created;
-
-    /**
-     * The expiration date, as a UNIX timestamp
-     *
-     * @var int
-     */
-    public $expires;
-
-    /**
-     * The number of times this task may fail before being assigned the status
-     * STATUS_FAILURE
-     *
-     * @var int
-     */
-    public $maxAttempts;
-
-    /**
-     * The number of times this task has been attempted
-     *
-     * @var int
-     */
-    public $attempts;
-
-    /**
-     * The alphanumeric session ID, if any
-     *
-     * @var string
-     */
-    public $sessionid;
-
-    /**
-     * The task status, as the value of one of the STATUS_XXX constants
-     *
-     * @var int
-     */
-    public $status;
-
-    /**
-     * The status of the most recent exception thrown during task processing, if
-     * any
-     *
-     * @var string
-     */
-    public $errorStatus;
-
-    /**
-     * The details of the most recent exception thrown during task processing,
-     * if any
-     *
-     * @var string
-     */
-    public $errorMessage;
 }

@@ -392,7 +392,7 @@ final class File {
      * @param int $mode The file mode
      * @throws CodeRage\Error
      */
-    public function mkdir(string $path, int $mode = 0777, ?ErrorHandler $handler = null) : void
+    public static function mkdir(string $path, int $mode = 0777, ?ErrorHandler $handler = null) : void
     {
         if ($handler === null) {
             $handler = new ErrorHandler;
