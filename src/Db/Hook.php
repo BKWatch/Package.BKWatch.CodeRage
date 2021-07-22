@@ -35,34 +35,8 @@ class Hook {
      */
     public function __construct(array $options = [])
     {
-        static $nextId = 0;
-        $this->db =
-            Args::checkKey($options, 'db', 'CodeRage\Db', [
-                'required' => true
-            ]);
         $this->preQuery = Args::checkKey($options, 'preQuery', 'callable');
         $this->postQuery = Args::checkKey($options, 'postQuery', 'callable');
-        $this->id = ++$nextId;
-    }
-
-    /**
-     * Returns the integral ID
-     *
-     * @return int
-     */
-    public final function id()
-    {
-        return $this->id;
-    }
-
-    /**
-     * Returns the underlying database connection
-     *
-     * @return CodeRage\Db
-     */
-    public final function db()
-    {
-        return $this->db;
     }
 
     /**
@@ -95,11 +69,6 @@ class Hook {
         if ($this->postQuery !== null)
             ($this->postQuery)($this, $sql);
     }
-
-    /**
-     * @var int
-     */
-    private $id;
 
     /**
      * @var callable

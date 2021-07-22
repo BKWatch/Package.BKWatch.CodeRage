@@ -97,10 +97,11 @@ final class Db extends \CodeRage\Db\Object_ {
         $useCache =
             Args::checkKey($options, 'useCache', 'boolean', [
                 'label' => 'use cache flag',
-                'default' => null,
                 'unset' => true
             ]);
-        $params = $cacheId = null;
+
+        // Construct implementation or fetch it from cache
+        $impl = null;
         if (!empty($options)) {
             if ($useCache !== null) {
                 throw new
@@ -115,32 +116,32 @@ final class Db extends \CodeRage\Db\Object_ {
             $params = $opt == 'params' ?
                 Args::checkKey($options, 'params', 'CodeRage\Db\Params') :
                 new Params($options);
+            $impl = self::newImpl($params);
         } else {
             $config = Config::current();
             $cacheId = self::cacheId($config);
-            if (!isset(self::$paramsCache[$cacheId])) {
-                self::$paramsCache[$cacheId] = Params::create($config);
-            }
-            $params = self::$paramsCache[$cacheId];
             $useCache = $useCache ?? true;
+            if ($useCache && isset(self::$cache[$cacheId])) {
+                $impl = self::$cache[$cacheId];
+            } else {
+                $impl = self::newImpl(Params::create($config));
+                if ($useCache) {
+                    self::$cache[$cacheId] = $impl;
+                }
+            }
         }
-        if (!array_key_exists($params->dbms(), self::DBMS_MAPPING)) {
+
+        // Check whether DBMS is supported
+        if (!array_key_exists($impl->params->dbms(), self::DBMS_MAPPING)) {
             throw new
                 Error([
                     'status' => 'INVALID_PARAMETER',
                     'details' => 'Unsupported DBMS: ' . $params->dbms()
                 ]);
         }
-        $this->params = $params;
-        $this->useCache = $useCache;
-        $this->nestable = true;
-        $this->queryProcessor = new Db\QueryProcessor($this);
-        $this->cacheId = $cacheId;
-    }
 
-    public function __destruct()
-    {
-        self::$hooks = null;
+        $this->impl = $impl;
+        $this->queryProcessor = new Db\QueryProcessor($this);
     }
 
     /**
@@ -148,20 +149,23 @@ final class Db extends \CodeRage\Db\Object_ {
      *
      * @return CodeRage\Db\Params
      */
-    public function params() { return $this->params; }
+    public function params(): Params
+    {
+        return $this->impl->params;
+    }
 
     /**
      * Begins a transaction
      *
      * @throws CodeRage\Error
      */
-    public function beginTransaction()
+    public function beginTransaction(): void
     {
         $transactionDepth = self::transactionDepth();
         $conn = $this->connection();
         if (!isset($transactionDepth[$conn]))
             $transactionDepth[$conn] = 0;
-        if (!$this->nestable && $transactionDepth[$conn] > 0)
+        if (!$this->impl->nestable && $transactionDepth[$conn] > 0)
             throw new
                 Error([
                     'status' => 'STATE_ERROR',
@@ -189,7 +193,7 @@ final class Db extends \CodeRage\Db\Object_ {
      *
      * @throws CodeRage\Error
      */
-    public function commit()
+    public function commit(): void
     {
         $transactionDepth = self::transactionDepth();
         $conn = $this->connection();
@@ -215,7 +219,7 @@ final class Db extends \CodeRage\Db\Object_ {
      *
      * @throws CodeRage\Error
      */
-    public function rollback()
+    public function rollback(): void
     {
         $transactionDepth = self::transactionDepth();
         $conn = $this->connection();
@@ -254,7 +258,7 @@ final class Db extends \CodeRage\Db\Object_ {
      * @return CodeRage\Db\Statement
      * @throws CodeRage\Error
      */
-    public function prepare($sql)
+    public function prepare($sql): Db\Statement
     {
         list($query, $columns, $params) = $this->queryProcessor->process($sql);
         try {
@@ -291,7 +295,7 @@ final class Db extends \CodeRage\Db\Object_ {
      * @return CodeRage\Db\Result
      * @throws CodeRage\Error
      */
-    public function query($sql, $args = null)
+    public function query($sql, $args = null): Db\Result
     {
         if (!is_array($args)) {
             $args = func_get_args();
@@ -299,9 +303,8 @@ final class Db extends \CodeRage\Db\Object_ {
         }
         list($query, $columns) = $this->queryProcessor->process($sql, $args);
         $conn = $this->connection();
-        if (self::$hooks !== null && isset(self::$hooks[$conn]))
-            foreach (self::$hooks[$conn] as $h)
-                $h->preQuery($query);
+        foreach ($this->impl->hooks as $h)
+            $h->preQuery($query);
         try {
             $result = $this->connection()->query($query);
         } catch (PDOException $e) {
@@ -312,9 +315,8 @@ final class Db extends \CodeRage\Db\Object_ {
                     'inner' => $e
                 ]);
         }
-        if (self::$hooks !== null && isset(self::$hooks[$conn]))
-            foreach (self::$hooks[$conn] as $h)
-                $h->postQuery($query);
+        foreach ($this->impl->hooks as $h)
+            $h->postQuery($query);
         return new Db\Result($result, $columns);
     }
 
@@ -326,9 +328,10 @@ final class Db extends \CodeRage\Db\Object_ {
      * @param string $table The table name
      * @param array $values An associative array of values, indexed by column
      *   name
+     * @return int
      * @throws CodeRage\Error if an error occurs
      */
-    public function insert($table, $values)
+    public function insert($table, $values): int
     {
         $cols = [];  // Column names
         $vals = [];  // Column values
@@ -365,7 +368,7 @@ final class Db extends \CodeRage\Db\Object_ {
      * @throws CodeRage\Error if no record matching the given conditions exists,
      *   or if an error occurs.
      */
-    public function update($table, $values, $where)
+    public function update($table, $values, $where): void
     {
         if (is_int($where))
             $where = ['RecordID' => $where];
@@ -425,7 +428,7 @@ final class Db extends \CodeRage\Db\Object_ {
      *   name
      * @param mixed $where The value of the 'RecordID' column, or an associative
      *   array mapping column names to values
-     * @return The value of the RecordID column of the new record, if an new
+     * @return The value of the RecordID column of the new record, if a new
      *   record was created, the RecordID column of the updated record, if a
      *   single record was updated, or an array containing the values of the
      *   RecordID columns of each record that was updated, if there was more
@@ -494,7 +497,7 @@ final class Db extends \CodeRage\Db\Object_ {
      *   occurs
      * @return boolean true for success
      */
-    public function delete($table, $where, $nothrow = false)
+    public function delete($table, $where, $nothrow = false): bool
     {
         if (!is_array($where))
             $where = ['RecordID' => $where];
@@ -557,7 +560,7 @@ final class Db extends \CodeRage\Db\Object_ {
 
     /**
      * Executes the given query, returning the first row of results as an
-     * indexed array by default or returned associative array or an stdClass
+     * indexed array by default or returned associative array or an object
      * object based on the value of $mode parameter
      *
      * @param string $sql A SQL query with embedded placeholders. Identifiers
@@ -622,7 +625,7 @@ final class Db extends \CodeRage\Db\Object_ {
      *   arguments
      * @return mixed
      */
-    public function fetchFirstArray($sql, $args = null)
+    public function fetchFirstArray($sql, $args = null): ?array
     {
         if (!is_array($args)) {
             $args = func_get_args();
@@ -652,7 +655,7 @@ final class Db extends \CodeRage\Db\Object_ {
      *   arguments
      * @return mixed
      */
-    public function fetchFirstObject($sql, $args = null)
+    public function fetchFirstObject($sql, $args = null): ?object
     {
         if (!is_array($args)) {
             $args = func_get_args();
@@ -744,19 +747,31 @@ final class Db extends \CodeRage\Db\Object_ {
      *
      * @param callable $func A callable with a single parameter of type
      *   CodeRage\Db; if will be passed this instance as argument
-     * @param array $options The options array; currently no options are
-     *   supported
+     * @param array $options The options array; supports the following options:
+     *     rollback - A callable taking an instance of CodeRage\Db to be invoked
+     *       after the transaction is rolled back
+     *     processError - A callable taking a caught exception object and an
+     *       instance of CodeRage\Db and returning a new exception object to
+     *       throw instead
      * @return The return value of $func
      */
     public function runInTransaction($func, array $options = [])
     {
         Args::check($func, 'callable', 'callback');
+        $rollback = Args::checkKey($options, 'rollback', 'callable');
+        $process = Args::checkKey($options, 'processError', 'callable');
         $this->beginTransaction();
         $result = null;
         try {
             $result = $func($this);
         } catch (Throwable $e) {
             $this->rollback();
+            if ($rollback !== null) {
+                $rollback($this);
+            }
+            if ($process != null) {
+                $e = $process($e, $this);
+            }
             throw $e;
         }
         $this->commit();
@@ -769,7 +784,7 @@ final class Db extends \CodeRage\Db\Object_ {
      *
      * @return int
      */
-    public function lastInsertId()
+    public function lastInsertId(): int
     {
         return (int) $this->connection()->lastInsertId();
     }
@@ -780,7 +795,7 @@ final class Db extends \CodeRage\Db\Object_ {
      * @param string $value
      * @return string
      */
-    public function quote($value)
+    public function quote($value): string
     {
         return $this->connection()->quote($value);
     }
@@ -794,7 +809,7 @@ final class Db extends \CodeRage\Db\Object_ {
      * @param string $identifier
      * @return string
      */
-    public function quoteIdentifier($identifier)
+    public function quoteIdentifier($identifier): string
     {
         $dbms = $this->params()->dbms();
         $quotes = null;
@@ -830,83 +845,68 @@ final class Db extends \CodeRage\Db\Object_ {
      * @return PDO
      * @throws CodeRage\Error
      */
-    public function connection()
+    public function connection(): PDO
     {
-        if (!$this->connection) {
-            if ( $this->cacheId !== null && $this->useCache &&
-                 isset(self::$connectionCache[$this->cacheId]) )
-            {
-                $this->connection = self::$connectionCache[$this->cacheId];
-            } else {
-                try {
-                    $options =
-                        [
-                            'host' => $this->params->host(),
-                            'port' => $this->params->port(),
-                            'dbname' => $this->params->database()
-                        ];
-                    $dsn = self::DBMS_MAPPING[$this->params->dbms()] . ':';
-                    foreach ($options as $n => $v)
-                        if ($v !== null)
-                            $dsn .= "$n=$v;";
-                    $driverOptions =
-                        [
-                            // Throw exception on error
-                            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        if (!$this->impl->connection) {
+            try {
+                $options =
+                    [
+                        'host' => $this->params()->host(),
+                        'port' => $this->params()->port(),
+                        'dbname' => $this->params()->database()
+                    ];
+                $dsn = self::DBMS_MAPPING[$this->params()->dbms()] . ':';
+                foreach ($options as $n => $v)
+                    if ($v !== null)
+                        $dsn .= "$n=$v;";
+                $driverOptions =
+                    [
+                        // Throw exception on error
+                        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
 
-                            // Disable emulation of prepared statements if
-                            // native prepared statements are supported
-                            PDO::ATTR_EMULATE_PREPARES => false,
+                        // Disable emulation of prepared statements if
+                        // native prepared statements are supported
+                        PDO::ATTR_EMULATE_PREPARES => false,
 
-                            // Return string values by default
-                            PDO::ATTR_STRINGIFY_FETCHES => true
-                        ];
-                    foreach ($this->params->options() as $n => $v) {
-                        if (!defined("PDO::$n"))
-                            throw new
-                                Error([
-                                    'status' => 'DATABASE_ERROR',
-                                    'details' =>
-                                        "Unsupported connection option: $n"
-                                ]);
-                        $driverOptions[constant("PDO::$n")] = $v;
-                    }
-                    $conn =
-                        new PDO(
-                                $dsn,
-                                $this->params->username(),
-                                $this->params->password(),
-                                $driverOptions
-                            );
-                    $this->connection = $conn;
-                    if ($this->cacheId !== null && $this->useCache)
-                        self::$connectionCache[$this->cacheId] = $conn;
-                } catch (PDOException $e) {
-                    throw new
-                        Error([
-                            'status' => 'DATABASE_ERROR',
-                            'details' => 'Failed connecting to database',
-                            'inner' => $e
-                        ]);
+                        // Return string values by default
+                        PDO::ATTR_STRINGIFY_FETCHES => true
+                    ];
+                foreach ($this->params()->options() as $n => $v) {
+                    if (!defined("PDO::$n"))
+                        throw new
+                            Error([
+                                'status' => 'DATABASE_ERROR',
+                                'details' =>
+                                    "Unsupported connection option: $n"
+                            ]);
+                    $driverOptions[constant("PDO::$n")] = $v;
                 }
+                $conn =
+                    new PDO(
+                            $dsn,
+                            $this->params()->username(),
+                            $this->params()->password(),
+                            $driverOptions
+                        );
+                $this->impl->connection = $conn;
+            } catch (PDOException $e) {
+                throw new
+                    Error([
+                        'status' => 'DATABASE_ERROR',
+                        'details' => 'Failed connecting to database',
+                        'inner' => $e
+                    ]);
             }
         }
-        return $this->connection;
+        return $this->impl->connection;
     }
 
     /**
-     * Closes the underlying database conection.
+     * Closes the underlying database conection
      */
-    public function disconnect()
+    public function disconnect(): void
     {
-        if ($this->connection !== null) {
-            if ( $this->cacheId != null &&
-                 isset(self::$connectionCache[$this->cacheId]) )
-            {
-                unset(self::$connectionCache[$this->cacheId]);
-            }
-            $this->connection = null;
-        }
+        $this->impl->connection = null;
     }
 
     /**
@@ -920,16 +920,11 @@ final class Db extends \CodeRage\Db\Object_ {
      *
      * @return CodeRage\Db\Hook
      */
-    public function registerHook(array $options)
+    public function registerHook(array $options): Hook
     {
-        $conn = $this->connection();
-        if (self::$hooks === null)
-            self::$hooks = new \SplObjectStorage;
-        if (!isset($hooks[$conn]))
-            self::$hooks[$conn] = new \stdClass;
-        $h = new Hook($options + ['db' => $this]);
-        self::$hooks[$conn]->{$h->id()} = $h;
-        return $h;
+        $hook = new Hook($options);
+        $this->impl->hooks[] = $hook;
+        return $hook;
     }
 
     /**
@@ -938,23 +933,19 @@ final class Db extends \CodeRage\Db\Object_ {
      * @param CodeRage\Db\Hook $hook A hook returned by a prior call to
      *   registerHook() on this instance
      */
-    public function unregisterHook(Hook $hook)
+    public function unregisterHook(Hook $hook): void
     {
-        if (self::$hooks === null || $this->connection === null)
-            throw new
-                Error([
-                    'status' => 'INVALID_PARAMETER',
-                    'details' => 'The specified hook is not registered'
-                ]);
-        $conn = $this->connection;
-        $other = self::$hooks[$conn]->{$hook->id()} ?? null;
-        if ($other !== $hook)
-            throw new
-                Error([
-                    'status' => 'INVALID_PARAMETER',
-                    'details' => 'The specified hook is not registered'
-                ]);
-        unset(self::$hooks[$conn]->{$hook->id()});
+        foreach ($this->impl->hooks as $i => $h) {
+            if ($h === $hook) {
+                array_splice($this->impl->hooks, $i, 1);
+                return;
+            }
+        }
+        throw new
+            Error([
+                'status' => 'INVALID_PARAMETER',
+                'details' => 'The specified hook is not registered'
+            ]);
     }
 
     /**
@@ -962,14 +953,32 @@ final class Db extends \CodeRage\Db\Object_ {
      *
      * @return CodeRage\Db
      */
-    public static function nonNestableInstance()
+    public static function nonNestableInstance(): self
     {
         static $instance;
         if ($instance === null) {
             $instance = new Db(['useCache' => false]);
-            $instance->nestable = false;
+            $instance->impl->nestable = false;
         }
         return $instance;
+    }
+
+    /**
+     * Returns an object with "params", "connection", "nestable", and "hooks"
+     * properties
+     *
+     * @param CodeRage\Db\Params $params
+     * @return object
+     */
+    private static function newImpl(Params $params): object
+    {
+        return (object)
+            [
+                'params' => $params,
+                'connection' => null,
+                'nestable' => true,
+                'hooks' => []
+            ];
     }
 
     /**
@@ -978,43 +987,12 @@ final class Db extends \CodeRage\Db\Object_ {
      *
      * @return SplObjectStorage
      */
-    private static function transactionDepth()
+    private static function transactionDepth(): \SplObjectStorage
     {
         static $transactionDepth;
         if ($transactionDepth === null)
             $transactionDepth = new \SplObjectStorage;
         return $transactionDepth;
-    }
-
-    /**
-     * Returns connection parameters for the named data source
-     *
-     * @param string $name The data source name
-     * @return CodeRage\Db\Params
-     */
-    private static function loadNamedDataSource($name)
-    {
-        if (!isset(self::$paramsCache[$name])) {
-            $json = null;
-            if (ctype_alnum($name)) {
-                $path = Config::projectRoot() . "/.coderage/db/$name.json";
-                File::checkFile($path, 0b0100);
-                $json = file_get_contents($path);
-            } else {
-                $json = $name;
-            }
-            $options = json_decode($json, true);
-            if ($options === null)
-                throw new
-                    Error([
-                        'status' => 'CONFIGURATION_ERROR',
-                        'details' =>
-                            "JSON decoding error for named data source '$name'"
-                    ]);
-            Args::check($options, 'map', "named data source '$name'");
-            self::$paramsCache[$name] = new Params($options);
-        }
-        return self::$paramsCache[$name];
     }
 
     /**
@@ -1024,7 +1002,7 @@ final class Db extends \CodeRage\Db\Object_ {
      * @param string $value A scalar value
      * @return string
      */
-    private static function placeholder($value)
+    private static function placeholder($value): string
     {
         return is_int($value) || is_bool($value) ?
             '%i' :
@@ -1039,7 +1017,7 @@ final class Db extends \CodeRage\Db\Object_ {
      * @param CodeRage\Sys\ProjectConfig $config
      * @return string
      */
-    private static function cacheId(\CodeRage\Sys\ProjectConfig $config)
+    private static function cacheId(\CodeRage\Sys\ProjectConfig $config): string
     {
         if ($config instanceof \CodeRage\Sys\Config\Builtin) {
             return '';
@@ -1053,65 +1031,22 @@ final class Db extends \CodeRage\Db\Object_ {
      }
 
     /**
-     * An associative array mapping data source names to instances of
-     * CodeRage\Db\Param
+     * Associative array mapping cache IDs to objects with "params",
+     * "connection", "nestable", and "hooks" properties
      *
      * @var array
      */
-    private static $paramsCache = [];
+    private static $cache = [];
 
     /**
-     * An associative array mapping data source names to instances of PDO
+     * An object with "params", "connection", "nestable", and "hooks" properties
      *
-     * @var array
+     * @var object
      */
-    private static $connectionCache = [];
-
-    /**
-     * Maps PDO objects to collections of instances of CodeRage\Db\Hook,
-     * indexed by hook ID
-     *
-     * @var SplObjectStorage
-     */
-    private static $hooks;
-
-    /**
-     * The connection parameters
-     *
-     * @var CodeRage\Db\Params
-     */
-    private $params;
-
-    /**
-     * The database connection, if any
-     *
-     * @var PDO
-     */
-    private $connection;
-
-    /**
-     * true if a cached connection should be used
-     *
-     * @var boolean
-     */
-    private $useCache;
-
-    /**
-     * true if simulated nested trasactions are supported
-     *
-     * @var boolean
-     */
-    private $nestable;
+    private $impl;
 
     /**
      * @var CodeRage\Db\QueryProcessor
      */
     private $queryProcessor;
-
-    /**
-     * An integer used as an index into the parameters and connections caches
-     *
-     * @var int
-     */
-    private $cacheId;
 }
