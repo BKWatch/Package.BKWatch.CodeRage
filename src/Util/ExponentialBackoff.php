@@ -106,8 +106,8 @@ final class ExponentialBackoff {
      *   to be called each time $operation throws an exception, returning true
      *   if $operation should be attempted again and false if the exception
      *   should be re-thrown
-     * @param string $message A participial phrase describing the
-     *   operation
+     * @param mixed $message A participial phrase describing the operation,
+     *   as a string or as a callable returning a string
      * @param CodeRage\Log $log A log for writing messages; defaults to the
      *   current log
      */
@@ -118,11 +118,17 @@ final class ExponentialBackoff {
             $log = Log::current();
         $sleep = $this->sleep;
         $attempts = $this->attempts;
-        $message = ucfirst($message);
         $result = $attempt = $error = null;
         for ($attempt = 1; $attempt <= $attempts; ++$attempt) {
-            if ($stream = $log->getStream(Log::DEBUG))
+            if ($stream = $log->getStream(Log::DEBUG)) {
+                if ($attempt == 1) {
+                    if (is_callable($message)) {
+                        $message = $message();
+                    }
+                    $message = ucfirst($message);
+                }
                 $stream->write("$message: attempt $attempt out of $attempts");
+            }
             try {
                 $result = $operation();
                 $error = null;
