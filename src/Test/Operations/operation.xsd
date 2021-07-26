@@ -583,7 +583,7 @@
           </complexType>
         </element>
       </sequence>
-      <attribute name="class" type="op:compoundIdentifier" use="required">
+      <attribute name="class" type="xsd:string" use="required">
         <annotation>
           <documentation>
             A class name, specified as a sequence of identifiers separated
