@@ -43,22 +43,37 @@ final class Runner {
     /**
      * @var int
      */
-    const AUTHOKEN_LIFETIME = 600;
+    private const AUTHOKEN_LIFETIME = 600;
 
     /**
      * @var int
      */
-    const DEFAULT_WEB_REQUEST_TIMEOUT = 86400;
+    private const DEFAULT_WEB_REQUEST_TIMEOUT = 86400;
 
     /**
      * @var string
      */
-    const SERVICE_PATH = '/CodeRage/Tool/run.php';
+    private const LOG_TAG = 'CodeRage.Tool.Runner';
 
     /**
      * @var string
      */
-    const LOG_TAG = 'CodeRage.Tool.Runner';
+    private const URI_PATH = '/CodeRage/Tool/run.php';
+
+    /**
+     * @var string
+     */
+    private const DEFAULT_HOST = '127.0.0.1';
+
+    /**
+     * @var string
+     */
+    private const DEFAULT_PORT = null;
+
+    /**
+     * @var string
+     */
+    private const DEFAULT_SSL = '0';
 
     /**
      * Executes a tool using the given options, returning the result or throwing
@@ -104,10 +119,10 @@ final class Runner {
         $options['rootauth'] = $session->sessionid();
 
         // Post request
+        $url = self::serviceUri($options);
         $bodyOptions = $options;
         unset($bodyOptions['timeout']);
         unset($bodyOptions['debug']);
-        $url = self::serviceUrl($options['debug']);
         $body = Json::encode($bodyOptions);
         if ($body === Json::ERROR)
             throw new
@@ -254,13 +269,13 @@ final class Runner {
     }
 
     /**
-     * Checks the root authorization token
+     * Constructs and executes an instance of CodeRage\Tool\Tool
      *
+     * @param CodeRage\Sys\Engine $engine
      * @param array $options The options array; accepts the same options as
      *   run()
-     * @throws Exception If authentication fails
      */
-    private static function authenticate($options)
+    private static function execute(Engine $engine, array $options)
     {
         $session = Session::authenticate(['sessionid' => $options['rootauth']]);
         if ($session->user()->id() != User::ROOT)
@@ -269,24 +284,9 @@ final class Runner {
                     'status' => 'UNAUTHORIZED',
                     'message' => 'Only root is permitted to run tools'
                 ]);
-    }
-
-    /**
-     * Constructs and executes an instance of CodeRage\Tool\Tool
-     *
-     * @param array $options The options array; accepts the same options as
-     *   run()
-     */
-    private static function execute($options)
-    {
         if (isset($options['logSessionId']))
             Log::current()->setSessionId($options['logSessionId']);
         self::getLog()->logMessage("Constructing tool");
-        $loadOpts =
-            [
-                'class' => $options['class'],
-                'params' => $options['ctor']
-            ];
         if (isset($options['config'])) {
             $config = new ArrayConfig($options['config']);
             Config::setCurrent($config);
@@ -299,7 +299,12 @@ final class Runner {
                 Session::authenticate($options['session']);
             Session::setCurrent($session);
         }
-        $tool = Factory::create($loadOpts);
+        $options['ctor']['engine'] = $engine;
+        $tool =
+            Factory::create([
+                'class' => $options['class'],
+                'params' => ['engine' => $engine]
+            ]);
         self::getLog()->logMessage("Executing tool");
         $result = $tool->execute($options['params']);
         $native = new \CodeRage\Util\NativeDataEncoder($options['encoding']);
@@ -494,23 +499,51 @@ final class Runner {
     }
 
     /**
-     * Returns the entry point of the specified web service
+     * Returns the entry point of the tool runner web service
      *
-     * @param string $debug An Xdebug IDE key, possibly null
+     * @param array $options The options array; supports the following options:$this
+     *     host - The tool runner host (optional)
+     *     port - The tool runner port (optional)
+     *     ssl - true to use SSL (optional)
+     *     debug - The DPGP IDE key (optional)
      * @return string The URL
      */
-    private static function serviceUrl($debug)
+    private static function serviceUri(array $options = [])
     {
         $config = Config::current();
-        $url =
-            ($config->getProperty('ssl', 0) ? 'https://' : 'http://') .
-            '127.0.0.1';
-        if ($config->hasProperty('site_port'))
-            $url .= ':' . $config->getProperty('site_port');
-        $url .= $debug != null ?
-            self::SERVICE_PATH . "?XDEBUG_SESSION_START=$debug" :
-            self::SERVICE_PATH;
-        return $url;
+        $host =
+            Args::checkKey($options, 'host', 'string', [
+                'default' =>
+                    $config->getProperty(
+                        "coderage.tool.runner.host",
+                        self::DEFAULT_HOST
+                    )
+            ]);
+        $port =
+            Args::checkIntKey($options, 'port', [
+                'default' =>
+                    $config->getProperty(
+                        "coderage.tool.runner.port",
+                        self::DEFAULT_PORT
+                    )
+            ]);
+        $ssl =
+            Args::checkBooleanKey($options, 'ssl', [
+                'default' =>
+                    $config->getProperty(
+                        "coderage.tool.runner.ssl",
+                        self::DEFAULT_SSL
+                    )
+            ]);
+        $debug =
+            Args::checkKey($options, 'debug', 'string', [
+                'label' => 'IDE key'
+            ]);
+        $uri =
+            ($ssl ? 'https' : 'http') . '://' . $host .
+            ($port !== null ? ':' . $port : '') . self::URI_PATH .
+            ($debug !== null ? "?XDEBUG_SESSION_START=$debug" : '');
+        return $uri;
     }
 
     /**
