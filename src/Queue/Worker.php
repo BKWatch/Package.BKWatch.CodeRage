@@ -1,9 +1,9 @@
 <?php
 
 /**
- * Defines the class CodeRage\Queue\Slave
+ * Defines the class CodeRage\Queue\Worker
  *
- * File:        CodeRage/Queue/Slave.php
+ * File:        CodeRage/Queue/Worker.phps
  * Date:        Fri Jan  3 16:30:13 UTC 2020
  * Notice:      This document contains confidential information
  *              and trade secrets
@@ -15,54 +15,56 @@
 
 namespace CodeRage\Queue;
 
-use Exception;
 use Throwable;
+use CodeRage\Config;
 use CodeRage\Error;
 use CodeRage\File;
+use CodeRage\Sys\BasicHandle;
 use CodeRage\Util\ErrorHandler;
-
+use CodeRage\Util\ExponentialBackoff;
+use CodeRage\Util\Time;
 
 /**
- * Implements the batch processor mode "slave"
+ * Implements the batch processor mode "worker"
  */
-class Slave {
+final class Worker extends BasicHandle {
 
     /**
      * @var string
      */
-    const RUN_TOOL_PATH = 'Scripts/run-tool';
+    private const RUN_TOOL_PATH = 'bin/run-tool';
 
     /**
      * @var int
      */
-    const OPEN_ATTEMPTS = 5;
+    private const OPEN_ATTEMPTS = 5;
 
     /**
      * @var float
      */
-    const OPEN_SLEEP = 0.5;
+    private const OPEN_SLEEP = 0.5;
 
     /**
      * @var float
      */
-    const OPEN_MULTIPLIER = 2.0;
+    private const OPEN_MULTIPLIER = 2.0;
 
     /**
      * Constructs a Util\TaskProcessor\Slave
      *
-     * @param Util\TaskManager $manager An instance of Util\TaskManager that
-     *   owns the tasks to be performed by the slave
+     * @param CodeRage\Queue\Manager$manager An instance of CodeRage\Queue\Manager
+     *   that owns the tasks to be performed by the worker
      * @param array $options The task processor options, encoded as strings
      */
-    public function __construct(\Util\TaskManager $manager, array $options)
+    public function __construct(Manager $manager, array $options)
     {
+        parent::__construct();
         $this->manager = $manager;
         $this->options = $options;
-        $this->start();
     }
 
     /**
-     * Returns the task-processing session ID of this slave process
+     * Returns the task-processing session ID of this worker process
      *
      * @return string
      */
@@ -72,26 +74,30 @@ class Slave {
     }
 
     /**
-     * Starts this slave
+     * Starts this worker
      */
     public function start()
     {
         // Construct command
-        $config = \CodeRage\Config::current();
-        $tool =  \CodeRage\Config::projectRoot() . '/' . self::RUN_TOOL_PATH;
+        $tool =  Config::projectRoot() . '/' . self::RUN_TOOL_PATH;
+        $class = $this->options['taskClass'];
         $command =
-            escapeshellarg($tool) . ' --language perl ' .
-            ' -c ' . escapeshellarg($this->class_()) .
-            ' --param taskSessionid=' . $manager->sessionid();
-        foreach ($this->options as $n => $v)
-            if ($v !== null)
+            escapeshellarg($tool) . ' -c ' . escapeshellarg($class) .
+            ' --param taskSessionid=' . $this->sessionid();
+        foreach ($this->options as $n => $v) {
+            if ($v !== null) {
+                if (is_bool($v)) {
+                    $v = (int) $v;
+                }
                 $command .= ' --param ' . escapeshellarg("$n=$v");
+            }
+        }
         if ($session = \CodeRage\Access\Session::current())
-            $command .= ' --session sessionid=' . $this->session->sessionid();
-        if ($this->options['taskDebug'])
-            $command .= ' -d';
-        $this->outputFile = tempnam($tmp, 'output');
-        $this->errorFile = tempnam($tmp, 'error');
+            $command .= ' --session sessionid=' . $this->session()->sessionid();
+        if (isset($this->options['taskDebug']))
+            $command .= ' -d ' . $this->options['taskDebug'];
+        $this->outputFile = File::temp();
+        $this->errorFile = File::temp();
         $spec =
             [
                 0 => ['pipe', 'r'],
@@ -100,11 +106,11 @@ class Slave {
             ];
         $pipes = null;
         $backoff =
-            new \CodeRage\Util\ExponentialBackoff(
-                    self::OPEN_ATTEMPTS,
-                    self::OPEN_SLEEP,
-                    self::OPEN_MULTIPLIER
-                );
+            new ExponentialBackoff([
+                    'attempts' => self::OPEN_ATTEMPTS,
+                    'sleep' => self::OPEN_SLEEP,
+                    'multipler' => self::OPEN_MULTIPLIER
+                ]);
         $this->proc =
             $backoff->execute(
                 function() use($command, $spec, &$pipes)
@@ -115,34 +121,33 @@ class Slave {
                             Error([
                                 'status' => 'INTERNAL_ERROR',
                                 'details' =>
-                                    "Failed starting slave (command '$command')"
+                                    "Failed starting worker (command '$command')"
                             ]);
                     return $proc;
                 },
                 function ($e) { return true; },
-                'starting slave',
-                $this->manager->log()
+                'starting worker',
+                $this->log()
             );
     }
 
     /**
-     * Returns true if this slave process has timed out
+     * Returns true if this worker process has timed out
      */
     public function timedOut()
     {
-        $db = $this->manager->tool()->db();
         $expires =
-            $db->fetchValue(
+            $this->db()->fetchValue(
                 'SELECT expires
                  FROM AccessSession
-                 WHERE RecordID = $i',
-                $this->manager->session()->id()
+                 WHERE sessionid = %s',
+                $this->sessionid()
             );
-        return $expires < \CodeRage\Util\Time::real();
+        return $expires < Time::real();
     }
 
     /**
-     * Returns true if this slave process has termianted
+     * Returns true if this worker process has termianted
      *
      * @return boolean
      */
@@ -157,8 +162,8 @@ class Slave {
                     'status' => 'INTERNAL_ERROR',
                     'details' =>
                         $handler->formatError(
-                            'Failed querying slave ' .
-                            $this->manager->sessionid()
+                            'Failed querying worker ' .
+                            $this->sessionid()
                         )
                 ]);
         }
@@ -167,13 +172,13 @@ class Slave {
     }
 
     /**
-     * Returns the output of the slave process, as an associative array
+     * Returns the output of the worker process, as an associative array
      * reference, and throws and exception if the process failed or output a
      * malformed result
      */
     public function result()
     {
-        $sessionid = $this->manager->sessionid();
+        $sessionid = $this->sessionid();
         $status = $this->info['exitcode'];
         if ($status != 0) {
             $error = is_file($this->errorFile) && is_readable($this->errorFile) ?
@@ -195,7 +200,7 @@ class Slave {
             throw new
                 Error([
                     'status' => 'INTERNAL_ERROR',
-                    'details' => "Failed reading output of slave $sessionid",
+                    'details' => "Failed reading output of worker $sessionid",
                     'inner' => $e
                 ]);
         }
@@ -211,33 +216,22 @@ class Slave {
                         "'$output'"
                 ]);
         }
-        if (!$result instanceof stdClass) {
+        if (!$result instanceof \stdClass) {
             $this->cleanup();
             throw new
                 Error([
                     'status' => 'INTERNAL_ERROR',
                     'details' =>
                         "Malformed tool output: expected object; found " .
-                        printScalar($result)
+                        Error::formatValue($result)
                 ]);
         }
         $this->cleanup();
-        if ($result['status'] == 'SUCCESS' && isset($result['result'])) {
-            return $result['result'];
+        if ($result->status == 'SUCCESS' && isset($result->result)) {
+            return $result->result;
         } else {
-            throw new Error($result);
+            throw new Error((array) $result);
         }
-    }
-
-    /**
-     * Returns the class name of the underlying task processor in dot-separated
-     * form
-     *
-     * @return string
-     */
-    private function class_()
-    {
-        return str_repalce('\\', '.', get_class($this->manager->tool()));
     }
 
     /**
@@ -248,13 +242,13 @@ class Slave {
         $handler = new ErrorHandler;
         if (is_resource($this->proc)) {
             $result = $handler->_proc_close($this->proc);
-            if ($result == -1 || $handler->errno())
-                $this->manager->tool()->logError(
+            if ($handler->errno()) {
+                $this->log()->logError(
                     $handler->formatError(
-                        'Failed cleaning up slave ' .
-                        $this->manager->sessionid()
+                        'Failed cleaning up worker ' . $this->sessionid()
                     )
                 );
+            }
             $this->proc = null;
         }
         if (is_string($this->outputFile) && file_exists($this->outputFile)) {
@@ -269,7 +263,7 @@ class Slave {
     }
 
     /**
-     * @var Util\TaskManager
+     * @var CodeRage\Queue\Manager
      */
     private $manager;
 

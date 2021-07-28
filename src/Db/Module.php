@@ -96,13 +96,7 @@ final class Module extends \CodeRage\Sys\BasicModule {
         $command = join(' ', $options);
         $engine->log()->logMessage("running $command");
         $status = null;
-        Os::run($command, $status);
-        if ($status != 0)
-            throw new
-                Error([
-                    'status' => 'INTERNAL_ERROR',
-                    'message' => 'Failed creating database'
-                ]);
+        Os::run($command);
 
         // Grant permission
         $host = $this->getProperty($config, 'db.host');

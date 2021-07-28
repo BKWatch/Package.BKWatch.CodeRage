@@ -2,7 +2,7 @@
 
 /**
  * Defines the class CodeRage\Queue\ManagerImpl
- * 
+ *
  * File:        CodeRage/Queue/ManagerImpl.php
  * Date:        Wed Dec 25 18:09:34 UTC 2019
  * Notice:      This document contains confidential information
@@ -38,7 +38,7 @@ final class ManagerImpl {
      * Updates the status of a processing job owned by the current processor and
      * increments the number of attempts
      *
-     * @param CodeRage\Queue\Task $task the task
+     * @param CodeRage\Queue\TaskImpl $task the task
      * @param int $status One of the constants STATUS_XXX
      * @param array $options The options array; supports the following options:
      *     maintainOwnership - true if the current queue processing session
@@ -154,6 +154,42 @@ final class ManagerImpl {
     }
 
     /**
+     * Sets the first data item associated with the given task to the given
+     * value
+     *
+     * @param CodeRage\Queue\TaskImpl $task the task
+     * @param string $value The value
+     */
+    public function setData1(TaskImpl $task, string $value): void
+    {
+        $this->setData1Statement()->execute([$value, $task->id]);
+    }
+
+    /**
+     * Sets the first data item associated with the given task to the given
+     * value
+     *
+     * @param CodeRage\Queue\TaskImpl $task the task
+     * @param string $value The value
+     */
+    public function setData2(TaskImpl $task, string $value): void
+    {
+        $this->setData2Statement()->execute([$value, $task->id]);
+    }
+
+    /**
+     * Sets the first data item associated with the given task to the given
+     * value
+     *
+     * @param CodeRage\Queue\TaskImpl $task the task
+     * @param string $value The value
+     */
+    public function setData3(TaskImpl $task, string $value): void
+    {
+        $this->setData3Statement()->execute([$value, $task->id]);
+    }
+
+    /**
      * Returns a prepared statement with placeholders for creation date,
      * task identifier, the three optional data items associated with a task,
      * the runtime parameters, the expiration date, the maxAttempts value,
@@ -237,6 +273,63 @@ final class ManagerImpl {
                 );
         }
         return $this->updateTaskStatement;
+    }
+
+    /**
+     * Returns a prepared statement with placeholders for data3 and task
+     * database ID
+     *
+     * @return CodeRage\Db\Statement
+     */
+    public function setData1Statement()
+    {
+        if ($this->setData1Statement === null) {
+            $this->setData1Statement =
+                $this->tool->db()->prepare(
+                    "UPDATE [$this->queue]
+                     SET data1 = %s
+                     WHERE RecordID = %i"
+                );
+        }
+        return $this->setData1Statement;
+    }
+
+    /**
+     * Returns a prepared statement with placeholders for data2 and task
+     * database ID
+     *
+     * @return CodeRage\Db\Statement
+     */
+    public function setData2Statement()
+    {
+        if ($this->setData2Statement === null) {
+            $this->setData2Statement =
+                $this->tool->db()->prepare(
+                    "UPDATE [$this->queue]
+                     SET data2 = %s
+                     WHERE RecordID = %i"
+                );
+        }
+        return $this->setData2Statement;
+    }
+
+    /**
+     * Returns a prepared statement with placeholders for data3 and task
+     * database ID
+     *
+     * @return CodeRage\Db\Statement
+     */
+    public function setData3Statement()
+    {
+        if ($this->setData3Statement === null) {
+            $this->setData3Statement =
+                $this->tool->db()->prepare(
+                    "UPDATE [$this->queue]
+                     SET data3 = %s
+                     WHERE RecordID = %i"
+                );
+        }
+        return $this->setData3Statement;
     }
 
     /**
@@ -374,6 +467,21 @@ final class ManagerImpl {
      * @var CodeRage\Db\Statement
      */
     private $updateTaskStatement;
+
+    /**
+     * @var CodeRage\Db\Statement
+     */
+    private $setData1Statement;
+
+    /**
+     * @var CodeRage\Db\Statement
+     */
+    private $setData2Statement;
+
+    /**
+     * @var CodeRage\Db\Statement
+     */
+    private $setData3Statement;
 
     /**
      * @var CodeRage\Db\Statement
