@@ -303,7 +303,7 @@ final class Runner {
         $tool =
             Factory::create([
                 'class' => $options['class'],
-                'params' => ['engine' => $engine]
+                'params' => $options['ctor']
             ]);
         self::getLog()->logMessage("Executing tool");
         $result = $tool->execute($options['params']);
