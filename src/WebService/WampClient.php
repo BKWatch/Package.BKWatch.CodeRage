@@ -49,7 +49,7 @@ final class WampClient {
         $this->processOptions($options);
         [$realm, $host, $port, $wsopts] =
             Array_::values($options, ['realm', 'host', 'port', 'wsopts']);
-        if (filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) === false)
+        if (filter_var($host, FILTER_VALIDATE_DOMAIN) === false)
             throw new
                 Error([
                     'status' => 'CONFIGURATION_ERROR',

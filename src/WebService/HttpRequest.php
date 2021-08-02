@@ -36,7 +36,7 @@ class HttpRequest {
      *
      * @var string
      */
-    const MATCH_HTTP_LINE = '#^HTTP/\d\.\d \d{3}\b#';
+    const MATCH_HTTP_LINE = '#^HTTP/\d(\.\d)? \d{3}\b#';
 
     /**
      * Regular expression used to parse headers
