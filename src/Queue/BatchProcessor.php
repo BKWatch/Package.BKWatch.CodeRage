@@ -29,9 +29,11 @@ use CodeRage\Util\Json;
 abstract class BatchProcessor extends \CodeRage\Tool\Tool {
 
     /**
+     * Default batch size; the trailing undescore prevents nameing clashes
+     *
      * @var int
      */
-    protected const DEFAULT_BATCH_SIZE = 1;
+    private const DEFAULT_BATCH_SIZE_ = 1;
 
     /**
      * The number of seconds to sleep after starting a worker; reduces the
@@ -834,7 +836,7 @@ abstract class BatchProcessor extends \CodeRage\Tool\Tool {
                 ]);
         }
         Args::checkIntKey($options, 'taskBatchSize', [
-            'default' => $this->doDefaultBatchSize() ?? self::DEFAULT_BATCH_SIZE
+            'default' => $this->doDefaultBatchSize() ?? self::DEFAULT_BATCH_SIZE_
         ]);
         $sleep =
             Args::checkIntKey($options, 'taskSleep', [
