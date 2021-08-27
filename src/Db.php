@@ -909,7 +909,7 @@ final class Db extends \CodeRage\Db\Object_ {
     public function registerRollbackHandler(callable $handler): bool
     {
         if ($this->impl->depth > 0) {
-            $this->impl->depth->rollbacks[] = $handler;
+            $this->impl->rollbacks[] = $handler;
             return true;
         } else {
             return false;
