@@ -850,7 +850,7 @@ trait Robot {
         if ($form === null)
             $form = $this->form();
         Args::check($fields, 'map', 'fields');
-        list($params, $files) = $this->processFields($fields);
+        [$params, $files] = $this->processFields($fields);
         foreach ($files as $n => $v) {
             $this->setFileUploadField(
                 $n,
@@ -934,6 +934,7 @@ trait Robot {
      *         - a list of strings (for fields with multiple values)
      *         - a list of associative arrays with keys 'path', 'filename', and
      *       'contentType' (for file inputs)
+     *     body - The request body (optional)
      *     errorMessage - An error message used to construct an exception if the
      *       request fails (optional)
      *     test - A test to apply to determine if the request was successful;
@@ -944,30 +945,22 @@ trait Robot {
      *     multipart - true to encode form data as multipart/form-data
      *     outputFile - A file path to which the response body should be written
      *       (optional)
+     *   At most one of the options 'postData' and 'content' may be specified.
      * @return Psr\Http\Message\ResponseInterface
      */
     public final function post($uri, array $options = [])
     {
-        Args::checkKey($options, 'postData', 'map', [
-            'label' => 'post data',
-            'default' => []
-        ]);
-        list($params, $files) = $this->processFields($options['postData']);
-        foreach ($files as $n => $v) {
-            $files[$n] =
-                [
-                    'tmp_name' => $v['path'],
-                    'name' => $v['filename'],
-                    'type' => $v['contentType'],
-                    'size' => filesize($v['path']),
-                    'error' => UPLOAD_ERR_OK
-                ];
-        }
+        $this->processPostOptions($options);
         $request =
-            function() use($uri, $params, $files)
+            function() use($uri, $options)
             {
                 return $this->client->request(
-                          'POST', (string)$uri, $params, $files
+                           'POST',
+                           (string)$uri,
+                           $options['params'],
+                           $options['files'],
+                           [],
+                           $options['body']
                        );
             };
         $options += ['method' => 'POST', 'uri' => $uri];
@@ -1001,8 +994,8 @@ trait Robot {
      *     headers - An associative array of HTTP headers (optional)
      *     outputFile - A file path to which the response body should be writte
      *       (optional)
-     *   At most one of the "buttonName", "buttonId" and "buttonIndex" can be
-     *   supplied; the same is true of "formName", "formId", "formSelector",
+     *   At most one of the "buttonName", "buttonId" and "buttonIndex" may be
+     *   specified; the same is true of "formName", "formId", "formSelector",
      *   and "formXpath"
      * @return Psr\Http\Message\ResponseInterface
      */
@@ -1411,6 +1404,72 @@ trait Robot {
     {
         Args::check($name, 'string', 'request option');
         unset($this->requestOptions[$name]);
+    }
+
+    /**
+     * Validates and processes options for post()
+     *
+     * @param array $options An associative array with keys among:
+     *     postData - An associative array mapping field names to field values.
+     *       Field values may be
+     *         - a string (the most common case)
+     *         - a list of strings (for fields with multiple values)
+     *         - a list of associative arrays with keys 'path', 'filename', and
+     *       'contentType' (for file inputs)
+     *     body - The request body (optional)
+     *     errorMessage - An error message used to construct an exception if the
+     *       request fails (optional)
+     *     test - A test to apply to determine if the request was successful;
+     *       may be a regular expression to match against the response body or a
+     *       callable taking an instance of Psr\Http\Message\ResponseInterface
+     *       and throwing exception on failure (optional)
+     *     headers - An associative array of HTTP headers (optional)
+     *     multipart - true to encode form data as multipart/form-data
+     *     outputFile - A file path to which the response body should be written
+     *       (optional)
+     *   At most one of the options 'postData' and 'content' may be specified.
+     */
+    private function processPostOptions(array &$options)
+    {
+        $postData =
+            Args::checkKey($options, 'postData', 'map', [
+                'label' => 'post data'
+            ]);
+        $body = Args::checkKey($options, 'body', 'string');
+        if ($postData !== null and $body !== null) {
+            throw new
+                Error([
+                    'status' => 'INCONSISTENT_PARAMETERS',
+                    'details' => "The options 'postData' and 'body' are incompatible"
+                ]);
+        }
+        if ($body !== null) {
+            if ($options['multipart'] ?? false) {
+                throw new
+                    Error([
+                        'status' => 'INCONSISTENT_PARAMETERS',
+                        'details' =>
+                            "The options 'body' and 'multipart' are incompatible"
+                    ]);
+            }
+            $options['params'] = [];
+            $options['files'] = [];
+        } else {
+            [$params, $files] = $this->processFields($options['postData'] ?? []);
+            foreach ($files as $n => $v) {
+                $files[$n] =
+                    [
+                        'tmp_name' => $v['path'],
+                        'name' => $v['filename'],
+                        'type' => $v['contentType'],
+                        'size' => filesize($v['path']),
+                        'error' => UPLOAD_ERR_OK
+                    ];
+            }
+            $options['params'] = $params;
+            $options['files'] = $files;
+            $options['body'] = null;
+        }
     }
 
     /**

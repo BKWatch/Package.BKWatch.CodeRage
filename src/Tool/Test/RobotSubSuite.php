@@ -2225,6 +2225,30 @@ class RobotSubSuite extends \CodeRage\Test\ReflectionSuite {
         );
     }
 
+    /**
+     * Tests a raw POST request
+     */
+    public function testPostRaw()
+    {
+        $body =
+            "Was he free? Was he happy? The question is absurd:\n" .
+            "Had anything been wrong, we should certainly have heard.";
+        $this->checkPost(
+            $this->createRobot(),
+            [
+	            'body' => $body,
+                'headers' => ['Content-Type' => 'text/plain']
+            ],
+            [
+                'method' => 'POST',
+                'statusCode' => 200,
+                'reasonPhrase' => 'OK',
+                'contentType' => 'text/plain',
+                'body' => $body
+            ]
+        );
+    }
+
             /*
              * Test submit() function
              */
@@ -3228,7 +3252,7 @@ class RobotSubSuite extends \CodeRage\Test\ReflectionSuite {
             }
         }
         if (isset($data['body'])) {
-            $response['body'] = self::decodeDataUri($data->body);
+            $response['body'] = self::decodeDataUri($data['body']);
         }
         if (isset($data['form'])) {
             $form = [];
