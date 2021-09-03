@@ -413,11 +413,15 @@ final class Manager {
         try {
             $result = $db->query($sql, $values);
             $stmt = $this->impl->updateSessionidStatement();
+            $maxTasks = $options['maxTasks'] ?? 0;
             while ($task = $result->fetchArray()) {
                 if ($this->log() !== null)
                     $this->logMessage('Claiming task', $this->encodeTask($task));
                 $stmt->execute([$this->sessionid(), $task['RecordID']]);
                 $tasks[] = $task;
+                if (count($tasks) === $maxTasks) {
+                    break;
+                }
             }
         } catch (Throwable $e) {
             $db->rollback();
